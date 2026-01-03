@@ -1,25 +1,31 @@
-import { Stack, Link } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { Redirect } from 'expo-router';
+import { useAuth } from '@/contexts/AuthContext';
 
-import { View } from 'react-native';
+export default function Index() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const [isReady, setIsReady] = useState(false);
 
-import { Button } from '@/components/Button';
-import { Container } from '@/components/Container';
-import { ScreenContent } from '@/components/ScreenContent';
+  // Wait for auth to initialize and add small delay for Android
+  useEffect(() => {
+    if (!isLoading) {
+      // Small delay to ensure Android has processed auth state
+      const timer = setTimeout(() => {
+        setIsReady(true);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading]);
 
-export default function Home() {
-  return (
-    <View className={styles.container}>
-      <Stack.Screen options={{ title: 'Home' }} />
-      <Container>
-        <ScreenContent path="app/index.tsx" title="Home"></ScreenContent>
-        <Link href={{ pathname: '/details', params: { name: 'Dan' } }} asChild>
-          <Button title="Show Details" />
-        </Link>
-      </Container>
-    </View>
-  );
+  // Show nothing while loading or waiting
+  if (!isReady) {
+    return null;
+  }
+
+  // Route based on actual auth state
+  if (isAuthenticated) {
+    return <Redirect href="/(tabs)" />;
+  }
+
+  return <Redirect href="/auth/login" />;
 }
-
-const styles = {
-  container: 'flex flex-1 bg-white',
-};

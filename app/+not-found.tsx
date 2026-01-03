@@ -1,26 +1,21 @@
 import { Link, Stack } from 'expo-router';
-
 import { Text, View } from 'react-native';
-
-import { Container } from '@/components/Container';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function NotFoundScreen() {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View className={styles.container}>
+    <View
+      className="flex-1 bg-white"
+      style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
       <Stack.Screen options={{ title: 'Oops!' }} />
-      <Container>
-        <Text className={styles.title}>{"This screen doesn't exist."}</Text>
-        <Link href="/" className={styles.link}>
-          <Text className={styles.linkText}>Go to home screen!</Text>
+      <View className="flex-1 items-center justify-center px-6">
+        <Text className="text-xl font-bold text-gray-900">This screen doesn&apos;t exist.</Text>
+        <Link href="/" className="mt-4 pt-4">
+          <Text className="text-base text-blue-600">Go to home screen</Text>
         </Link>
-      </Container>
+      </View>
     </View>
   );
 }
-
-const styles = {
-  container: `flex flex-1 bg-white`,
-  title: `text-xl font-bold`,
-  link: `mt-4 pt-4`,
-  linkText: `text-base text-[#2e78b7]`,
-};
