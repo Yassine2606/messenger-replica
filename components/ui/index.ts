@@ -7,3 +7,5 @@ export * from './ChatInputFooter';
 export * from './ScrollToBottom';
 export * from './ImageViewer';
 export * from './TypingIndicator';
+export * from './BottomSheet';
+export * from './BottomSheetScrollView';

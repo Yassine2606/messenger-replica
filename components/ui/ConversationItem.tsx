@@ -46,8 +46,9 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
   const messagePreview = getMessagePreview();
 
   return (
-    <View className={`flex-row items-center border-b border-gray-100 px-4 py-3 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
-      <View className="mr-3 relative">
+    <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-3 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
+      {/* Avatar */}
+      <View className="mr-3 relative justify-center">
         <View className="h-12 w-12 items-center justify-center rounded-full bg-blue-500">
           <Text className="text-lg font-semibold text-white">
             {otherParticipant?.name?.charAt(0).toUpperCase() || '?'}
@@ -58,37 +59,38 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
         )}
       </View>
 
+      {/* Content */}
       <View className="flex-1">
+        {/* Header: Name + Time */}
         <View className="flex-row items-center justify-between">
-          <Text className={`text-base font-semibold ${hasUnread ? 'text-gray-900' : 'text-gray-900'}`} numberOfLines={1}>
+          <Text className="text-base font-semibold text-gray-900 flex-1 pr-2" numberOfLines={1}>
             {otherParticipant?.name || 'Unknown'}
           </Text>
-          <View className="items-end">
-            <Text className={`text-xs ${hasUnread ? 'font-semibold text-gray-700' : 'text-gray-500'}`}>
-              {formatTime(lastMessage?.createdAt)}
-            </Text>
+          <Text className={`text-xs ${hasUnread ? 'font-semibold text-gray-700' : 'text-gray-500'} flex-shrink-0`}>
+            {formatTime(lastMessage?.createdAt)}
+          </Text>
+        </View>
+
+        {/* Footer: Message preview + Status + Unread indicator */}
+        <View className="mt-1.5 flex-row items-center justify-between">
+          <Text
+            className={`flex-1 text-sm ${hasUnread ? 'font-semibold text-gray-900' : 'text-gray-600'}`}
+            numberOfLines={1}>
+            {messagePreview}
+          </Text>
+          <View className="ml-2 flex-row items-center flex-shrink-0">
             {isOwnMessage && status && (
               <Text
-                className={`text-xs font-medium mt-0.5 ${
+                className={`text-xs font-medium mr-1 ${
                   status === 'Read' ? 'text-blue-600' : status === 'Delivered' ? 'text-gray-500' : 'text-gray-400'
                 }`}>
                 {status}
               </Text>
             )}
+            {hasUnread && (
+              <View className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+            )}
           </View>
-        </View>
-
-        <View className="mt-1 flex-row items-center justify-between">
-          <View className="flex-1 flex-row items-center">
-            <Text
-              className={`flex-1 text-sm ${hasUnread ? 'font-semibold text-gray-900' : 'text-gray-600'}`}
-              numberOfLines={1}>
-              {messagePreview}
-            </Text>
-          </View>
-          {hasUnread && (
-            <View className="ml-2 h-2.5 w-2.5 rounded-full bg-blue-600" />
-          )}
         </View>
       </View>
     </View>

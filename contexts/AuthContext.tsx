@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useEffect, useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/services';
+import { socketClient } from '@/lib/socket';
 import { type User } from '@/models';
 
 interface AuthContextType {
   isAuthenticated: boolean;
-  // Legacy support for existing screens
-  isLoading?: boolean;
-  setUser?: (user: User | null) => void;
+  isInitialized: boolean;
+  login: (token: string, user: User) => void;
+  logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -15,72 +16,62 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  // Initialize auth state from stored token on mount
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        console.log('[AuthContext] Starting initialization...');
         await apiClient.initialize();
-        
-        // If token exists, fetch profile and cache it
-        if (apiClient.isAuthenticated()) {
-          console.log('[AuthContext] Token found, fetching profile...');
-          try {
-            const user = await apiClient.get<User>('/auth/profile');
-            console.log('[AuthContext] Profile fetched:', user.name);
-            // Cache the user data immediately
-            queryClient.setQueryData(['auth', 'profile'], user);
-            // Small delay to ensure cache is set before routing
-            await new Promise(resolve => setTimeout(resolve, 50));
-            setIsAuthenticated(true);
-            console.log('[AuthContext] Auth state set to true');
-          } catch (error) {
-            console.error('[AuthContext] Token invalid, clearing:', error);
-            await apiClient.clearToken();
-            queryClient.removeQueries({ queryKey: ['auth', 'profile'] });
-            setIsAuthenticated(false);
+        const isAuth = apiClient.isAuthenticated();
+        setIsAuthenticated(isAuth);
+
+        // Connect socket only if authenticated (socket connect has built-in guard against duplicates)
+        if (isAuth) {
+          const token = await apiClient.getToken();
+          if (token && !socketClient.isConnected()) {
+            socketClient.connect(token);
           }
-        } else {
-          console.log('[AuthContext] No token found');
-          setIsAuthenticated(false);
         }
       } catch (error) {
-        console.error('[AuthContext] Error initializing auth:', error);
+        console.error('[Auth] Initialization error:', error);
         setIsAuthenticated(false);
       } finally {
-        console.log('[AuthContext] Initialization complete');
-        setIsLoading(false);
+        setIsInitialized(true);
       }
     };
 
     initializeAuth();
-  }, [queryClient]);
+  }, []);
 
-  // Legacy setUser support - updates cache AND auth state
-  const setUser = useCallback(
-    (user: User | null) => {
-      if (user) {
-        queryClient.setQueryData(['auth', 'profile'], user);
-        setIsAuthenticated(true);
-      } else {
-        queryClient.removeQueries({ queryKey: ['auth', 'profile'] });
-        setIsAuthenticated(false);
+  const login = useCallback(
+    (token: string, user: User) => {
+      apiClient.setToken(token);
+      // Connect socket only if not already connected
+      if (!socketClient.isConnected()) {
+        socketClient.connect(token);
       }
+      queryClient.setQueryData(['auth', 'profile'], user);
+      setIsAuthenticated(true);
     },
     [queryClient]
   );
 
+  const logout = useCallback(async () => {
+    await apiClient.clearToken();
+    socketClient.disconnect();
+    queryClient.clear();
+    setIsAuthenticated(false);
+  }, [queryClient]);
+
   const value: AuthContextType = {
     isAuthenticated,
-    isLoading,
-    setUser,
+    isInitialized,
+    login,
+    logout,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
-
 
 export function useAuth() {
   const context = useContext(AuthContext);

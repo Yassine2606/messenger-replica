@@ -1,23 +1,32 @@
-import React, { useEffect } from 'react';
-import { Modal, View, StyleSheet, Dimensions, Pressable, ActivityIndicator, StatusBar } from 'react-native';
+import React, { useCallback, useEffect } from 'react';
+import {
+  Modal,
+  View,
+  StyleSheet,
+  Dimensions,
+  Pressable,
+  ActivityIndicator,
+  StatusBar,
+} from 'react-native';
 import { Image } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
-import { runOnJS } from 'react-native-worklets';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// Constants for gesture behavior
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 const DOUBLE_TAP_SCALE = 2.5;
-const DISMISS_THRESHOLD = 100;
-const DISMISS_VELOCITY_THRESHOLD = 500;
+const DISMISS_THRESHOLD = 120;
+const DISMISS_VELOCITY_THRESHOLD = 800;
+const TIMING_CONFIG = { duration: 200 };
 
 interface ImageViewerProps {
   visible: boolean;
@@ -25,119 +34,165 @@ interface ImageViewerProps {
   onClose: () => void;
 }
 
-export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
-  // Image dimensions state
-  const [imageSize, setImageSize] = React.useState({ width: 0, height: 0 });
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(false);
+type ImageDimensions = { width: number; height: number };
 
-  // Gesture values
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
+/**
+ * ImageViewer: Production-grade image modal with pinch zoom, double-tap zoom, and swipe-to-close
+ * Features:
+ * - Smooth pinch-to-zoom with focal point preservation
+ * - Double-tap zoom at tap location
+ * - Pan when zoomed with edge clamping
+ * - Swipe-down to dismiss with backdrop fade
+ * - Loading and error states
+ * - Accessibility support
+ */
+export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
+  // State for image dimensions and loading
+  const [imageSize, setImageSize] = React.useState<ImageDimensions>({ width: 0, height: 0 });
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isError, setIsError] = React.useState(false);
+
+  // Animated values for zoom and pan
+  const scale = useSharedValue(MIN_SCALE);
+  const savedScale = useSharedValue(MIN_SCALE);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
-  const focalX = useSharedValue(0);
-  const focalY = useSharedValue(0);
   const backdropOpacity = useSharedValue(1);
+  const isPinching = useSharedValue(false);
 
-  // Load image dimensions
-  useEffect(() => {
-    if (visible && imageUri) {
-      setLoading(true);
-      setError(false);
-      
-      Image.getSize(
-        imageUri,
-        (width, height) => {
-          const imageAspect = width / height;
-          const screenAspect = SCREEN_WIDTH / SCREEN_HEIGHT;
-          
-          let finalWidth = SCREEN_WIDTH;
-          let finalHeight = SCREEN_HEIGHT;
-          
-          if (imageAspect > screenAspect) {
-            finalHeight = SCREEN_WIDTH / imageAspect;
-          } else {
-            finalWidth = SCREEN_HEIGHT * imageAspect;
-          }
-          
-          setImageSize({ width: finalWidth, height: finalHeight });
-          setLoading(false);
-        },
-        () => {
-          setError(true);
-          setLoading(false);
-        }
-      );
+  /**
+   * Calculate image dimensions to fit screen while maintaining aspect ratio
+   */
+  const calculateImageDimensions = useCallback((width: number, height: number): ImageDimensions => {
+    const imageAspect = width / height;
+    const screenAspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+
+    if (imageAspect > screenAspect) {
+      return {
+        width: SCREEN_WIDTH,
+        height: SCREEN_WIDTH / imageAspect,
+      };
     }
-  }, [visible, imageUri]);
 
-  // Reset on close
-  const resetState = () => {
-    scale.value = withTiming(1);
-    savedScale.value = 1;
-    translateX.value = withTiming(0);
-    translateY.value = withTiming(0);
+    return {
+      width: SCREEN_HEIGHT * imageAspect,
+      height: SCREEN_HEIGHT,
+    };
+  }, []);
+
+  /**
+   * Load image dimensions on mount or when URI changes
+   */
+  useEffect(() => {
+    if (!visible || !imageUri) return;
+
+    setIsLoading(true);
+    setIsError(false);
+
+    Image.getSize(
+      imageUri,
+      (width, height) => {
+        setImageSize(calculateImageDimensions(width, height));
+        setIsLoading(false);
+      },
+      () => {
+        setIsError(true);
+        setIsLoading(false);
+      }
+    );
+  }, [visible, imageUri, calculateImageDimensions]);
+
+  /**
+   * Reset all gesture state values
+   */
+  const resetGestureState = useCallback(() => {
+    scale.value = withTiming(MIN_SCALE, TIMING_CONFIG);
+    savedScale.value = MIN_SCALE;
+    translateX.value = withTiming(0, TIMING_CONFIG);
+    translateY.value = withTiming(0, TIMING_CONFIG);
     savedTranslateX.value = 0;
     savedTranslateY.value = 0;
-    backdropOpacity.value = withTiming(1);
-  };
+    backdropOpacity.value = withTiming(1, TIMING_CONFIG);
+  }, [scale, translateX, translateY, backdropOpacity]);
 
-  const handleClose = () => {
-    resetState();
+  /**
+   * Close modal and reset state
+   */
+  const handleClose = useCallback(() => {
+    resetGestureState();
     onClose();
-  };
+  }, [resetGestureState, onClose]);
 
-  // Pinch gesture
+  /**
+   * Pinch gesture: Zoom in/out with focal point preservation
+   */
   const pinchGesture = Gesture.Pinch()
     .onStart(() => {
-      focalX.value = 0;
-      focalY.value = 0;
+      // Mark that we're pinching to prevent pan interference
+      isPinching.value = true;
+      // Save current state when pinch starts
+      savedScale.value = scale.value;
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
     })
     .onUpdate((event) => {
-      const newScale = savedScale.value * event.scale;
-      scale.value = Math.min(Math.max(newScale, MIN_SCALE), MAX_SCALE);
-      
-      // Adjust focal point
-      focalX.value = event.focalX - SCREEN_WIDTH / 2;
-      focalY.value = event.focalY - SCREEN_HEIGHT / 2;
+      // Scale is cumulative from gesture start
+      const newScale = Math.min(Math.max(savedScale.value * event.scale, MIN_SCALE), MAX_SCALE);
+      scale.value = newScale;
+
+      // Get focal point relative to screen center
+      const focalX = event.focalX - SCREEN_WIDTH / 2;
+      const focalY = event.focalY - SCREEN_HEIGHT / 2;
+
+      // Calculate how much we've scaled relative to saved state
+      const scaleFactor = newScale / savedScale.value;
+
+      // Keep focal point stationary: move image so pinch point stays under fingers
+      translateX.value = focalX - (focalX - savedTranslateX.value) / scaleFactor;
+      translateY.value = focalY - (focalY - savedTranslateY.value) / scaleFactor;
     })
     .onEnd(() => {
+      // Update saved values for next gesture
       savedScale.value = scale.value;
-      
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+      // Mark pinch as complete
+      isPinching.value = false;
+
+      // Snap back if barely zoomed
       if (scale.value < 1.1) {
-        scale.value = withSpring(1);
-        savedScale.value = 1;
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
+        scale.value = withTiming(MIN_SCALE, TIMING_CONFIG);
+        savedScale.value = MIN_SCALE;
+        translateX.value = withTiming(0, TIMING_CONFIG);
+        translateY.value = withTiming(0, TIMING_CONFIG);
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       }
     });
 
-  // Pan gesture (for panning when zoomed or dismissing)
+  /**
+   * Pan gesture: Pan when zoomed, swipe down to dismiss
+   */
   const panGesture = Gesture.Pan()
     .onUpdate((event) => {
       const isZoomed = scale.value > 1.1;
-      
+
       if (isZoomed) {
-        // Pan when zoomed - with edge clamping
-        const maxTranslateX = ((imageSize.width * scale.value) - SCREEN_WIDTH) / 2;
-        const maxTranslateY = ((imageSize.height * scale.value) - SCREEN_HEIGHT) / 2;
-        
         const newTranslateX = savedTranslateX.value + event.translationX;
         const newTranslateY = savedTranslateY.value + event.translationY;
-        
+
+        // Clamp translate values inline to prevent panning beyond image bounds
+        const maxTranslateX = (imageSize.width * scale.value - SCREEN_WIDTH) / 2;
+        const maxTranslateY = (imageSize.height * scale.value - SCREEN_HEIGHT) / 2;
+
         translateX.value = Math.min(Math.max(newTranslateX, -maxTranslateX), maxTranslateX);
         translateY.value = Math.min(Math.max(newTranslateY, -maxTranslateY), maxTranslateY);
-      } else {
-        // Swipe down to dismiss
+      } else if (!isPinching.value) {
+        // Only allow swipe-to-dismiss if not currently pinching
         if (event.translationY > 0) {
           translateY.value = event.translationY;
-          
-          // Fade backdrop based on drag distance
           const progress = Math.min(event.translationY / SCREEN_HEIGHT, 1);
           backdropOpacity.value = 1 - progress * 0.7;
         }
@@ -145,60 +200,57 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
     })
     .onEnd((event) => {
       const isZoomed = scale.value > 1.1;
-      
+
       if (isZoomed) {
         savedTranslateX.value = translateX.value;
         savedTranslateY.value = translateY.value;
       } else {
-        // Check if should dismiss
         const shouldDismiss =
-          translateY.value > DISMISS_THRESHOLD ||
-          event.velocityY > DISMISS_VELOCITY_THRESHOLD;
-        
+          translateY.value > DISMISS_THRESHOLD || event.velocityY > DISMISS_VELOCITY_THRESHOLD;
+
         if (shouldDismiss) {
-          translateY.value = withTiming(SCREEN_HEIGHT, { duration: 200 });
-          backdropOpacity.value = withTiming(0, { duration: 200 });
+          translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
+          backdropOpacity.value = withTiming(0, TIMING_CONFIG);
           runOnJS(handleClose)();
         } else {
-          translateY.value = withSpring(0);
-          backdropOpacity.value = withSpring(1);
+          translateY.value = withTiming(0, TIMING_CONFIG);
+          backdropOpacity.value = withTiming(1, TIMING_CONFIG);
         }
       }
     });
 
-  // Double tap gesture
+  /**
+   * Double-tap gesture: Zoom to tap location or zoom out
+   */
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd((event) => {
       if (scale.value > 1.1) {
-        // Zoom out
-        scale.value = withSpring(1);
-        savedScale.value = 1;
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
+        // Already zoomed, zoom out
+        scale.value = withTiming(MIN_SCALE, TIMING_CONFIG);
+        savedScale.value = MIN_SCALE;
+        translateX.value = withTiming(0, TIMING_CONFIG);
+        translateY.value = withTiming(0, TIMING_CONFIG);
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       } else {
-        // Zoom in to tap location
-        const targetScale = DOUBLE_TAP_SCALE;
-        
-        // Calculate focal point relative to center
+        // Zoom in at tap location
         const tapX = event.x - SCREEN_WIDTH / 2;
         const tapY = event.y - SCREEN_HEIGHT / 2;
-        
-        scale.value = withSpring(targetScale);
-        savedScale.value = targetScale;
-        
-        // Pan to center the tapped point
-        translateX.value = withSpring(-tapX * (targetScale - 1));
-        translateY.value = withSpring(-tapY * (targetScale - 1));
-        savedTranslateX.value = -tapX * (targetScale - 1);
-        savedTranslateY.value = -tapY * (targetScale - 1);
+
+        scale.value = withTiming(DOUBLE_TAP_SCALE, TIMING_CONFIG);
+        savedScale.value = DOUBLE_TAP_SCALE;
+        translateX.value = withTiming(-tapX * (DOUBLE_TAP_SCALE - 1), TIMING_CONFIG);
+        translateY.value = withTiming(-tapY * (DOUBLE_TAP_SCALE - 1), TIMING_CONFIG);
+        savedTranslateX.value = -tapX * (DOUBLE_TAP_SCALE - 1);
+        savedTranslateY.value = -tapY * (DOUBLE_TAP_SCALE - 1);
       }
     });
 
-  // Compose gestures
-  const composedGesture = Gesture.Race(
+  /**
+   * Compose gestures: pinch + pan simultaneously, double-tap separately
+   */
+  const composedGesture = Gesture.Simultaneous(
     Gesture.Simultaneous(pinchGesture, panGesture),
     doubleTapGesture
   );
@@ -224,35 +276,47 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
       transparent
       animationType="fade"
       statusBarTranslucent
-      onRequestClose={handleClose}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      onRequestClose={handleClose}
+      accessibilityRole="image"
+      accessibilityLabel="Full screen image viewer">
+      <GestureHandlerRootView style={styles.gestureRoot}>
         <StatusBar hidden />
-        
+
         <View style={styles.container}>
           {/* Backdrop */}
           <Animated.View style={[styles.backdrop, animatedBackdropStyle]} />
-          
+
           {/* Close button */}
           <View style={styles.header}>
-            <Pressable onPress={handleClose} style={styles.closeButton}>
-              <Ionicons name="close" size={32} color="white" />
+            <Pressable
+              onPress={handleClose}
+              style={styles.closeButton}
+              accessibilityRole="button"
+              accessibilityLabel="Close image viewer"
+              accessibilityHint="Double tap to close">
+              <Ionicons name="close" size={24} color="white" />
             </Pressable>
           </View>
 
           {/* Image with gestures */}
           <GestureDetector gesture={composedGesture}>
-            <Animated.View style={styles.imageContainer}>
-              {loading && (
-                <ActivityIndicator size="large" color="white" style={styles.loader} />
+            <Animated.View style={styles.imageContainer} accessible={false}>
+              {isLoading && (
+                <ActivityIndicator
+                  size="large"
+                  color="white"
+                  style={styles.loader}
+                  accessibilityLabel="Loading image"
+                />
               )}
-              
-              {error && (
-                <View style={styles.errorContainer}>
+
+              {isError && (
+                <View style={styles.errorContainer} accessible={true} accessibilityLabel="Failed to load image">
                   <Ionicons name="image-outline" size={64} color="rgba(255,255,255,0.5)" />
                 </View>
               )}
-              
-              {!loading && !error && (
+
+              {!isLoading && !isError && (
                 <Animated.Image
                   source={{ uri: imageUri }}
                   style={[
@@ -263,6 +327,8 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
                     animatedImageStyle,
                   ]}
                   resizeMode="contain"
+                  accessible={true}
+                  accessibilityRole="image"
                 />
               )}
             </Animated.View>
@@ -274,13 +340,16 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: 'transparent',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'black',
+    backgroundColor: '#000000',
   },
   header: {
     position: 'absolute',
@@ -288,15 +357,16 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 10,
-    paddingTop: 50,
+    paddingTop: 12,
     paddingHorizontal: 16,
+    paddingBottom: 16,
   },
   closeButton: {
     width: 44,
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     borderRadius: 22,
   },
   imageContainer: {

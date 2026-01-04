@@ -14,13 +14,19 @@ class SocketClient {
   private socket: Socket | null = null;
   private token: string | null = null;
   private listeners: Map<string, Set<Function>> = new Map();
+  private eventListeners: Map<string, Set<Function>> = new Map();
 
   /**
    * Connect to socket server
    */
   connect(token: string): void {
     if (this.socket?.connected) {
-      console.log('[Socket] Already connected');
+      return;
+    }
+
+    if (this.socket && !this.socket.connected) {
+      // Reconnect existing socket
+      this.socket.connect();
       return;
     }
 
@@ -32,6 +38,7 @@ class SocketClient {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     this.setupEventHandlers();
@@ -46,7 +53,7 @@ class SocketClient {
       this.socket = null;
       this.token = null;
       this.listeners.clear();
-      console.log('[Socket] Disconnected');
+      this.eventListeners.clear();
     }
   }
 
@@ -64,24 +71,57 @@ class SocketClient {
     if (!this.socket) return;
 
     this.socket.on('connect', () => {
-      console.log('[Socket] Connected');
-      this.emit('connected');
+      this.emitEvent('connected');
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected:', reason);
-      this.emit('disconnected', reason);
+      this.emitEvent('disconnected', reason);
     });
 
     this.socket.on('connect_error', (error) => {
       console.error('[Socket] Connection error:', error);
-      this.emit('error', error);
+      this.emitEvent('error', error);
     });
 
     this.socket.on('error', (payload: SocketErrorPayload) => {
       console.error('[Socket] Server error:', payload);
-      this.emit('server_error', payload);
+      this.emitEvent('server_error', payload);
     });
+
+    // Register message event listeners
+    this.socket.on('message:new', (payload: SocketMessagePayload) => {
+      this.emitEvent('message:new', payload);
+    });
+
+    this.socket.on('message:status', (payload: SocketMessageStatusPayload) => {
+      this.emitEvent('message:status', payload);
+    });
+
+    this.socket.on('conversation:updated', (payload: SocketConversationUpdatePayload) => {
+      this.emitEvent('conversation:updated', payload);
+    });
+
+    this.socket.on('user:status', (payload: SocketUserStatusPayload) => {
+      this.emitEvent('user:status', payload);
+    });
+
+    this.socket.on('typing:start', (payload: SocketTypingPayload) => {
+      this.emitEvent('typing:start', payload);
+    });
+
+    this.socket.on('typing:stop', (payload: SocketTypingPayload) => {
+      this.emitEvent('typing:stop', payload);
+    });
+  }
+
+  /**
+   * Emit internal event
+   */
+  private emitEvent(event: string, data?: any): void {
+    const handlers = this.eventListeners.get(event);
+    if (handlers) {
+      handlers.forEach((handler) => handler(data));
+    }
   }
 
   /**
@@ -149,90 +189,64 @@ class SocketClient {
   }
 
   /**
-   * Listen for new messages
+   * Subscribe to event with cleanup function
    */
-  onMessageNew(callback: (payload: SocketMessagePayload) => void): () => void {
-    return this.on('message:new', callback);
-  }
-
-  /**
-   * Listen for message status updates
-   */
-  onMessageStatus(callback: (payload: SocketMessageStatusPayload) => void): () => void {
-    return this.on('message:status', callback);
-  }
-
-  /**
-   * Listen for conversation updates
-   */
-  onConversationUpdated(callback: (payload: SocketConversationUpdatePayload) => void): () => void {
-    return this.on('conversation:updated', callback);
-  }
-
-  /**
-   * Listen for user status changes
-   */
-  onUserStatus(callback: (payload: SocketUserStatusPayload) => void): () => void {
-    return this.on('user:status', callback);
-  }
-
-  /**
-   * Listen for typing start
-   */
-  onTypingStart(callback: (payload: SocketTypingPayload) => void): () => void {
-    return this.on('typing:start', callback);
-  }
-
-  /**
-   * Listen for typing stop
-   */
-  onTypingStop(callback: (payload: SocketTypingPayload) => void): () => void {
-    return this.on('typing:stop', callback);
-  }
-
-  /**
-   * Generic event listener
-   */
-  on(event: string, callback: Function): () => void {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, new Set());
+  subscribe<T = any>(event: string, handler: (data: T) => void): () => void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(callback);
-
-    // Register with socket if not internal event
-    if (!['connected', 'disconnected', 'error', 'server_error'].includes(event)) {
-      this.socket?.on(event, callback as any);
-    }
+    
+    this.eventListeners.get(event)!.add(handler as Function);
 
     // Return cleanup function
-    return () => this.off(event, callback);
-  }
-
-  /**
-   * Remove event listener
-   */
-  off(event: string, callback: Function): void {
-    const callbacks = this.listeners.get(event);
-    if (callbacks) {
-      callbacks.delete(callback);
-      if (callbacks.size === 0) {
-        this.listeners.delete(event);
+    return () => {
+      const handlers = this.eventListeners.get(event);
+      if (handlers) {
+        handlers.delete(handler as Function);
       }
-    }
-
-    if (!['connected', 'disconnected', 'error', 'server_error'].includes(event)) {
-      this.socket?.off(event, callback as any);
-    }
+    };
   }
 
   /**
-   * Emit internal event to listeners
+   * Listen to new messages
    */
-  private emit(event: string, ...args: any[]): void {
-    const callbacks = this.listeners.get(event);
-    if (callbacks) {
-      callbacks.forEach((callback) => callback(...args));
-    }
+  onMessageNew(handler: (payload: SocketMessagePayload) => void): () => void {
+    return this.subscribe('message:new', handler);
+  }
+
+  /**
+   * Listen to message status updates
+   */
+  onMessageStatus(handler: (payload: SocketMessageStatusPayload) => void): () => void {
+    return this.subscribe('message:status', handler);
+  }
+
+  /**
+   * Listen to conversation updates
+   */
+  onConversationUpdated(handler: (payload: SocketConversationUpdatePayload) => void): () => void {
+    return this.subscribe('conversation:updated', handler);
+  }
+
+  /**
+   * Listen to user status changes
+   */
+  onUserStatus(handler: (payload: SocketUserStatusPayload) => void): () => void {
+    return this.subscribe('user:status', handler);
+  }
+
+  /**
+   * Listen to typing start
+   */
+  onTypingStart(handler: (payload: SocketTypingPayload) => void): () => void {
+    return this.subscribe('typing:start', handler);
+  }
+
+  /**
+   * Listen to typing stop
+   */
+  onTypingStop(handler: (payload: SocketTypingPayload) => void): () => void {
+    return this.subscribe('typing:stop', handler);
   }
 }
 

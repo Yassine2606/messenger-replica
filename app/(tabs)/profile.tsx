@@ -2,11 +2,13 @@ import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } fr
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProfile, useLogout } from '@/hooks/useAuth';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { data: user, isLoading } = useProfile();
-  const logout = useLogout();
+  const { logout: authLogout } = useAuth();
+  const logoutMutation = useLogout();
 
   const handleLogout = async () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
@@ -15,7 +17,8 @@ export default function ProfileScreen() {
         text: 'Logout',
         onPress: async () => {
           try {
-            await logout.mutateAsync();
+            await logoutMutation.mutateAsync();
+            authLogout(); // Clear auth state
             router.replace('/auth/login' as any);
           } catch (error) {
             Alert.alert('Error', 'Failed to logout. Please try again.');
@@ -85,10 +88,10 @@ export default function ProfileScreen() {
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={handleLogout}
-        disabled={logout.isPending}
+        disabled={logoutMutation.isPending}
         className="rounded-lg bg-red-600 py-4">
         <Text className="text-center text-base font-semibold text-white">
-          {logout.isPending ? 'Logging out...' : 'Logout'}
+          {logoutMutation.isPending ? 'Logging out...' : 'Logout'}
         </Text>
       </TouchableOpacity>
     </ScrollView>

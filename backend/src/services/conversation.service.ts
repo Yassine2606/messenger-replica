@@ -2,6 +2,7 @@ import { Conversation, Message, MessageRead, User, ConversationParticipant } fro
 import { AppError } from '../middleware';
 import { ConversationDTO, messageToDTO } from '../types';
 import { ReadStatus } from '../models/MessageRead';
+import { sequelize } from '../config/database';
 
 export class ConversationService {
   /**
@@ -113,7 +114,8 @@ export class ConversationService {
     // Check if other user exists
     const otherUser = await User.findByPk(otherUserId);
     if (!otherUser) {
-      throw new AppError(404, 'User not found');
+      console.error('[ConversationService] User not found:', otherUserId);
+      throw new AppError(404, `User with ID ${otherUserId} not found`);
     }
 
     // Find existing 1:1 conversation
@@ -122,16 +124,27 @@ export class ConversationService {
       return this.getConversation(existingConversation.id, userId);
     }
 
-    // Create new conversation
-    const conversation = await Conversation.create();
-    await ConversationParticipant.bulkCreate(
-      [
-        { conversationId: conversation.id, userId },
-        { conversationId: conversation.id, userId: otherUserId },
-      ],
-      { ignoreDuplicates: true }
-    );
+    // Create new conversation with transaction
+    const conversation = await sequelize.transaction(async (transaction) => {
+      // Double-check for existing conversation within transaction
+      const existingCheck = await this.findOne1To1Conversation(userId, otherUserId);
+      if (existingCheck) {
+        return existingCheck;
+      }
 
+      const newConv = await Conversation.create({}, { transaction });
+      await ConversationParticipant.bulkCreate(
+        [
+          { conversationId: newConv.id, userId },
+          { conversationId: newConv.id, userId: otherUserId },
+        ],
+        { ignoreDuplicates: true, transaction }
+      );
+
+      return newConv;
+    });
+
+    // Fetch the full conversation after transaction
     return this.getConversation(conversation.id, userId);
   }
 
@@ -200,10 +213,13 @@ export class ConversationService {
    * Count unread messages for a user in conversation
    */
   private async countUnreadMessages(conversationId: number, userId: number): Promise<number> {
+    const { Op } = require('sequelize');
     const unreadCount = await MessageRead.count({
       where: {
         userId,
-        status: ReadStatus.DELIVERED,
+        status: {
+          [Op.in]: [ReadStatus.SENT, ReadStatus.DELIVERED],
+        },
       },
       include: [
         {

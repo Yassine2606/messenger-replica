@@ -55,6 +55,23 @@ class FileStorage {
   }
 
   /**
+   * Get file extension from mime type
+   */
+  private getExtensionFromMimeType(mimeType: string): string {
+    const mimeMap: Record<string, string> = {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+      'audio/mpeg': '.mp3',
+      'audio/wav': '.wav',
+      'audio/ogg': '.ogg',
+      'audio/m4a': '.m4a',
+    };
+    return mimeMap[mimeType] || '';
+  }
+
+  /**
    * Save file and return URL
    */
   public async saveFile(buffer: Buffer, mimeType: string, fileType: FileType): Promise<FileUploadResult> {
@@ -63,7 +80,8 @@ class FileStorage {
       throw new AppError(400, validation.error || 'Invalid file');
     }
 
-    const filename = `${fileType}-${crypto.randomBytes(16).toString('hex')}-${Date.now()}`;
+    const extension = this.getExtensionFromMimeType(mimeType);
+    const filename = `${fileType}-${crypto.randomBytes(16).toString('hex')}-${Date.now()}${extension}`;
     const filepath = path.join(this.uploadDir, filename);
 
     try {

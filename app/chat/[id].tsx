@@ -1,78 +1,176 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { View, FlatList, TextInput, ActivityIndicator, Text, Alert } from 'react-native';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { View, FlatList, TextInput, ActivityIndicator, Text, Alert, Keyboard, Pressable } from 'react-native';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { ChatHeader, ChatInputFooter, MessageItem, ScrollToBottom, TypingIndicator } from '@/components/ui';
+import { ChatHeader, ChatInputFooter, MessageItem, ScrollToBottom, TypingIndicator, BottomSheet } from '@/components/ui';
 import {
-  useMessages,
+  useInfiniteMessages,
   useSendMessage,
   useConversation,
+  useMarkConversationAsReadOptimistic,
+  useScrollToBottom,
+  useBottomSheet,
 } from '@/hooks';
 import { useProfile } from '@/hooks/useAuth';
-import { useSocketMessages, useTypingIndicator, useListenTyping, useConversationRoom } from '@/hooks/useSocket';
+import { useDeleteMessage } from '@/hooks/useMessage';
+import { useTypingIndicator, useListenTyping, useConversationRoom, useIncomingMessages } from '@/hooks/useSocket';
 import { uploadService } from '@/services';
 import type { Message, MessageType } from '@/models';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const conversationId = parseInt(id || '0', 10);
+  const inputRef = useRef<TextInput>(null);
 
-  // Data fetching
+  // ============== Data & State ==============
   const { data: user } = useProfile();
   const { data: conversation, isLoading: conversationLoading } = useConversation(conversationId);
-  const { data: messages = [], isLoading: messagesLoading, refetch: refetchMessages } = useMessages(conversationId);
+  const {
+    data: infiniteData,
+    isLoading: messagesLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteMessages(conversationId);
 
-  // Mutations
   const sendMessageMutation = useSendMessage();
-
-  // Socket management - room joining, message listeners
-  useConversationRoom(conversationId);
-  useSocketMessages(conversationId);
-
-    // Get other participant
-  const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
-
-  // Typing indicators
-  const { startTyping, stopTyping } = useTypingIndicator(conversationId);
-  const otherUserIsTyping = useListenTyping(conversationId, otherParticipant?.id || null);
+  const markAsReadOptimistic = useMarkConversationAsReadOptimistic();
+  const deleteMessageMutation = useDeleteMessage();
 
   // Local state
   const [messageText, setMessageText] = useState('');
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
-  const inputRef = useRef<TextInput>(null);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
 
-  // Shared animated values for list-wide timestamp reveal
+  // Bottom sheet
+  const bottomSheet = useBottomSheet();
+  const insets = useSafeAreaInsets();
+
+  // ============== Refs ==============
+  const flatListRef = useRef<FlatList>(null);
+  const keyboardDismissTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const sendInProgressRef = useRef(false);
+
+  // ============== Animated Values ==============
   const sharedRowTranslateX = useSharedValue(0);
   const sharedTimestampOpacity = useSharedValue(0);
 
-  // Refetch messages when screen gains focus
+  // ============== Socket & Typing ==============
+  useConversationRoom(conversationId);
+  useIncomingMessages(conversationId);
+
+  const { startTyping, stopTyping } = useTypingIndicator(conversationId);
+  const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
+  const otherUserIsTyping = useListenTyping(conversationId, otherParticipant?.id || null);
+
+  // ============== Scroll Hook ==============
+  const { showButton: showScrollToBottom, handleScroll, scrollToBottom, cleanup } = useScrollToBottom(flatListRef);
+
+  // ============== Keyboard Event Listeners ==============
+  useEffect(() => {
+    const showListener = Keyboard.addListener('keyboardDidShow', () => {
+      setIsKeyboardVisible(true);
+      if (keyboardDismissTimeoutRef.current) {
+        clearTimeout(keyboardDismissTimeoutRef.current);
+        keyboardDismissTimeoutRef.current = null;
+      }
+    });
+
+    return () => {
+      showListener.remove();
+      if (keyboardDismissTimeoutRef.current) {
+        clearTimeout(keyboardDismissTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // ============== Focus Effects ==============
   useFocusEffect(
     useCallback(() => {
-      console.log('[ChatScreen] Screen focused, refetching messages', {
-        conversationId,
-        userId: user?.id,
-      });
-      
-      // Refetch messages to ensure we have latest
-      refetchMessages();
-    }, [conversationId, refetchMessages, user?.id])
+      if (conversationId && user?.id) {
+        markAsReadOptimistic(conversationId);
+      }
+    }, [conversationId, user?.id, markAsReadOptimistic])
   );
 
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
+
+  // ============== Message Actions ==============
+  const handleMessageLongPress = useCallback((message: Message) => {
+    // Only allow actions on own messages
+    if (message.senderId !== user?.id) {
+      return;
+    }
+    setSelectedMessage(message);
+    bottomSheet.open();
+  }, [bottomSheet, user?.id]);
+
+  const handleDeleteMessage = useCallback(async () => {
+    if (!selectedMessage) return;
+
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteMessageMutation.mutateAsync(selectedMessage.id);
+              bottomSheet.close();
+              setSelectedMessage(null);
+            } catch (error) {
+              console.error('Delete error:', error);
+              Alert.alert('Error', 'Failed to delete message');
+            }
+          },
+        },
+      ]
+    );
+  }, [selectedMessage, deleteMessageMutation, bottomSheet]);
+
+  const handleEditMessage = useCallback(() => {
+    if (!selectedMessage || selectedMessage.type !== 'text') return;
+    setEditingMessage(selectedMessage);
+    setMessageText(selectedMessage.content || '');
+    bottomSheet.close();
+    setSelectedMessage(null);
+    // Focus input after a short delay
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }, [selectedMessage, bottomSheet]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingMessage(null);
+    setMessageText('');
+  }, []);
+
+  // ============== Message Sending ==============
   const handleSend = useCallback(async () => {
     const trimmedText = messageText.trim();
-    if (!trimmedText || sendMessageMutation.isPending) return;
+    if (!trimmedText || sendMessageMutation.isPending || sendInProgressRef.current) return;
 
+    // TODO: Handle edit message when backend supports it
+    if (editingMessage) {
+      Alert.alert('Coming Soon', 'Message editing will be available soon');
+      cancelEdit();
+      return;
+    }
+
+    sendInProgressRef.current = true;
     const replyId = replyToMessage?.id;
 
-    // Stop typing before sending
     stopTyping();
-
-    // Clear input immediately for better UX
     setMessageText('');
     setReplyToMessage(null);
 
@@ -83,51 +181,42 @@ export default function ChatScreen() {
         content: trimmedText,
         replyToId: replyId,
       });
-
-      // Refocus input after send
     } catch (error) {
-      // Restore message on error
       setMessageText(trimmedText);
       if (replyId && replyToMessage) {
         setReplyToMessage(replyToMessage);
       }
       console.error('Failed to send message:', error);
+    } finally {
+      sendInProgressRef.current = false;
+      // Explicit focus after send completes
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
-  }, [messageText, sendMessageMutation, conversationId, replyToMessage, stopTyping]);
+  }, [messageText, replyToMessage, sendMessageMutation, conversationId, stopTyping]);
 
+  // ============== Text Change ==============
+  const handleMessageTextChange = useCallback(
+    (text: string) => {
+      setMessageText(text);
+      if (text.trim().length > 0) {
+        startTyping();
+      } else {
+        stopTyping();
+      }
+    },
+    [startTyping, stopTyping]
+  );
+
+  // ============== Reply Handlers ==============
   const handleReply = useCallback((message: Message) => {
     setReplyToMessage(message);
-    inputRef.current?.focus();
   }, []);
 
   const cancelReply = useCallback(() => {
     setReplyToMessage(null);
   }, []);
 
-  const handleMessageTextChange = useCallback((text: string) => {
-    setMessageText(text);
-    // Send typing indicator
-    if (text.trim().length > 0) {
-      startTyping();
-    } else {
-      stopTyping();
-    }
-  }, [startTyping, stopTyping]);
-
-  const handleScroll = useCallback(({ nativeEvent }: any) => {
-    const { contentOffset } = nativeEvent;
-    // With inverted list: contentOffset.y near 0 = at bottom (latest messages)
-    // contentOffset.y > threshold = scrolled up (older messages)
-    const isNearBottom = contentOffset.y < 50;
-    setShowScrollToBottom(!isNearBottom);
-  }, []);
-
-  const handleScrollToBottom = useCallback(() => {
-    setShowScrollToBottom(false);
-    // With inverted list, scroll to offset 0 to see latest messages
-    flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-  }, []);
-
+  // ============== Media Handlers ==============
   const handlePickImage = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -137,7 +226,7 @@ export default function ChatScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: [ 'images', 'videos'],
+        mediaTypes: ['images', 'videos'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 1,
@@ -145,10 +234,8 @@ export default function ChatScreen() {
 
       if (!result.canceled && result.assets[0]) {
         setUploading(true);
-        console.log('Uploading image:', result.assets[0].uri);
         const uploadResult = await uploadService.uploadFile(result.assets[0].uri, 'image');
-        console.log('Upload success:', uploadResult);
-        
+
         await sendMessageMutation.mutateAsync({
           conversationId,
           type: 'image' as MessageType,
@@ -180,7 +267,7 @@ export default function ChatScreen() {
       if (!result.canceled && result.assets[0]) {
         setUploading(true);
         const uploadResult = await uploadService.uploadFile(result.assets[0].uri, 'image');
-        
+
         await sendMessageMutation.mutateAsync({
           conversationId,
           type: 'image' as MessageType,
@@ -200,6 +287,14 @@ export default function ChatScreen() {
     Alert.alert('Audio', 'Audio recording coming soon');
   }, []);
 
+  // ============== Pagination ==============
+  const handleEndReached = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // ============== Loading State ==============
   if (conversationLoading || messagesLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
@@ -208,24 +303,24 @@ export default function ChatScreen() {
     );
   }
 
-  // Sort newest to oldest, then inverted prop flips it so newest appears at bottom
+  // ============== Message Processing ==============
+  const messages = infiniteData?.pages?.flat() || [];
   const sortedMessages = [...messages].sort((a, b) => {
     const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return timeB - timeA;
   });
 
-  // Find last own message for read status indicator (first in sorted array since newest first)
   const lastOwnMessage = sortedMessages.find((msg) => msg.senderId === user?.id);
 
+  // ============== Render ==============
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-white"
       behavior="padding"
-      keyboardVerticalOffset={0}
-      style={{ flex: 1 }}>
-      <ChatHeader 
-        title={otherParticipant?.name || 'Chat'} 
+      keyboardVerticalOffset={0}>
+      <ChatHeader
+        title={otherParticipant?.name || 'Chat'}
         isOnline={otherParticipant?.status === 'online' && !!otherParticipant?.id}
       />
 
@@ -236,11 +331,18 @@ export default function ChatScreen() {
         keyExtractor={(item) => `msg-${item.id}`}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={2}
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <View className="py-4 items-center">
+              <ActivityIndicator size="small" color="#3B82F6" />
+            </View>
+          ) : null
+        }
         renderItem={({ item, index }) => {
           const isOwn = item.senderId === user?.id;
           const isLastOwnMessage = isOwn && item.id === lastOwnMessage?.id;
-          
-          // For inverted list: previous is at index + 1, next is at index - 1
           const previousMessage = sortedMessages[index + 1];
           const nextMessage = sortedMessages[index - 1];
 
@@ -253,6 +355,7 @@ export default function ChatScreen() {
               isLastOwnMessage={isLastOwnMessage}
               currentUserId={user?.id}
               onReply={handleReply}
+              onLongPress={handleMessageLongPress}
               sharedRowTranslateX={sharedRowTranslateX}
               sharedTimestampOpacity={sharedTimestampOpacity}
             />
@@ -268,31 +371,64 @@ export default function ChatScreen() {
         }
       />
 
-      <TypingIndicator 
-        visible={otherUserIsTyping} 
-        userName={otherParticipant?.name}
-      />
+      <TypingIndicator visible={otherUserIsTyping} userName={otherParticipant?.name} />
 
-      {showScrollToBottom && (
-        <View 
-          className="absolute left-0 right-0 items-center z-10" 
-          style={{ bottom: 72, pointerEvents: 'box-none' }}>
-          <ScrollToBottom visible={showScrollToBottom} onPress={handleScrollToBottom} />
-        </View>
-      )}
+      <ScrollToBottom visible={showScrollToBottom} onPress={scrollToBottom} />
 
       <ChatInputFooter
         messageText={messageText}
         onChangeText={handleMessageTextChange}
         onSend={handleSend}
-        replyToMessage={replyToMessage}
-        onCancelReply={cancelReply}
+        replyToMessage={editingMessage || replyToMessage}
+        onCancelReply={editingMessage ? cancelEdit : cancelReply}
         sendingMessage={sendMessageMutation.isPending || uploading}
         inputRef={inputRef}
         onPickImage={handlePickImage}
         onTakePhoto={handleTakePhoto}
         onPickAudio={handlePickAudio}
       />
+
+      {/* Message Actions Bottom Sheet */}
+      <BottomSheet
+        ref={bottomSheet.ref}
+        isOpen={bottomSheet.isOpen}
+        onClose={bottomSheet.close}
+        snapPoints={['30%']}
+        enableBackdropDismiss
+      >
+        <View style={{ paddingBottom: insets.bottom + 10, paddingHorizontal: 20, paddingTop: 10 }}>
+          <Text className="text-lg font-semibold text-gray-900 mb-4">Message Actions</Text>
+
+          {selectedMessage?.type === 'image' ? (
+            // Image message: only delete
+            <Pressable
+              onPress={handleDeleteMessage}
+              className="flex-row items-center py-4 border-b border-gray-100 active:bg-gray-50"
+            >
+              <Ionicons name="trash-outline" size={24} color="#EF4444" />
+              <Text className="ml-3 text-base text-red-500 font-medium">Delete Image</Text>
+            </Pressable>
+          ) : (
+            // Text message: edit and delete
+            <>
+              <Pressable
+                onPress={handleEditMessage}
+                className="flex-row items-center py-4 border-b border-gray-100 active:bg-gray-50"
+              >
+                <Ionicons name="pencil-outline" size={24} color="#3B82F6" />
+                <Text className="ml-3 text-base text-gray-900 font-medium">Edit Message</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleDeleteMessage}
+                className="flex-row items-center py-4 active:bg-gray-50"
+              >
+                <Ionicons name="trash-outline" size={24} color="#EF4444" />
+                <Text className="ml-3 text-base text-red-500 font-medium">Delete Message</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      </BottomSheet>
     </KeyboardAvoidingView>
   );
 }

@@ -48,16 +48,12 @@ export class UploadService {
       
       formData.append('fileType', fileType);
       
-      console.log('Uploading file:', { uri, filename, mimeType, fileType });
-      
-      // Use apiClient's post method
       const result = await apiClient.post<UploadResult>('/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
       
-      console.log('Upload result:', result);
       return result;
     } catch (error: any) {
       console.error('Upload service error:', error.response?.data || error.message);

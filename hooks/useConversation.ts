@@ -12,15 +12,12 @@ export function useConversations() {
   return useQuery({
     queryKey: CONVERSATIONS_KEY,
     queryFn: async () => {
-      console.log('[useConversations] Fetching conversations...');
-      try {
-        const result = await conversationService.getConversations();
-        console.log('[useConversations] Fetched', result.length, 'conversations');
-        return result;
-      } catch (error) {
-        console.error('[useConversations] Error:', error);
-        throw error;
-      }
+      const result = await conversationService.getConversations();
+      return result.sort((a, b) => {
+        const aTime = new Date(a.lastMessageAt || a.updatedAt).getTime();
+        const bTime = new Date(b.lastMessageAt || b.updatedAt).getTime();
+        return bTime - aTime;
+      });
     },
     staleTime: 30000, // 30 seconds
     retry: 1,
@@ -67,17 +64,45 @@ export function useUpdateConversation() {
   const queryClient = useQueryClient();
 
   return (conversation: Conversation) => {
-    // Update in list
+    // Update in list with proper sorting
     queryClient.setQueryData<Conversation[]>(CONVERSATIONS_KEY, (old = []) => {
-      const index = old.findIndex((c) => c.id === conversation.id);
-      if (index === -1) return [conversation, ...old];
-      
-      const newList = [...old];
-      newList[index] = conversation;
-      return newList;
+      const filtered = old.filter((c) => c.id !== conversation.id);
+      // Add updated conversation at the top (most recent)
+      return [conversation, ...filtered];
     });
 
     // Update individual cache
     queryClient.setQueryData(CONVERSATION_KEY(conversation.id), conversation);
+  };
+}
+
+/**
+ * Mark conversation as read and update unread count
+ */
+export function useMarkConversationAsReadOptimistic() {
+  const queryClient = useQueryClient();
+
+  return (conversationId: number) => {
+    // Optimistically update conversations list to set unreadCount to 0
+    queryClient.setQueryData<Conversation[]>(CONVERSATIONS_KEY, (old = []) => {
+      return old.map((conv) => {
+        if (conv.id === conversationId) {
+          return {
+            ...conv,
+            unreadCount: 0,
+          };
+        }
+        return conv;
+      });
+    });
+
+    // Also update specific conversation cache
+    queryClient.setQueryData<Conversation>(CONVERSATION_KEY(conversationId), (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        unreadCount: 0,
+      };
+    });
   };
 }

@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { setUser } = useAuth();
+  const { login } = useAuth();
   const loginMutation = useLogin();
 
   const [email, setEmail] = useState('');
@@ -40,8 +40,9 @@ export default function LoginScreen() {
 
     try {
       const response = await loginMutation.mutateAsync({ email, password });
-      setUser?.(response.user);
-      // Tabs layout will now see isAuthenticated=true and allow navigation
+      // Call auth context login to set auth state
+      login(response.token, response.user);
+      // Navigate to tabs
       router.replace('/(tabs)' as any);
     } catch (error: any) {
       const status = error?.response?.status;

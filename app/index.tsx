@@ -1,28 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Index() {
-  const { isAuthenticated, isLoading } = useAuth();
-  const [isReady, setIsReady] = useState(false);
+  const { isAuthenticated, isInitialized } = useAuth();
 
-  // Wait for auth to initialize and add small delay for Android
-  useEffect(() => {
-    if (!isLoading) {
-      // Small delay to ensure Android has processed auth state
-      const timer = setTimeout(() => {
-        setIsReady(true);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [isLoading]);
-
-  // Show nothing while loading or waiting
-  if (!isReady) {
-    return null;
+  // Show loading while initializing
+  if (!isInitialized) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+      </View>
+    );
   }
 
-  // Route based on actual auth state
+  // Route based on auth state
   if (isAuthenticated) {
     return <Redirect href="/(tabs)" />;
   }

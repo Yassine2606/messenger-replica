@@ -2,11 +2,10 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import type {
-  SocketMessagePayload,
-  SocketMessageStatusPayload,
-  SocketConversationUpdatePayload,
   SocketUserStatusPayload,
   SocketTypingPayload,
+  SocketMessagePayload,
+  SocketMessageStatusPayload,
 } from '@/models';
 
 /**
@@ -56,45 +55,6 @@ export function useConversationRoom(conversationId: number | null) {
       previousConversationId.current = null;
     };
   }, [conversationId]);
-}
-
-/**
- * Hook for real-time message updates in a specific conversation
- */
-export function useSocketMessages(conversationId: number) {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (!conversationId) return;
-
-    // Listen for new messages in this conversation
-    const unsubMessageNew = socketClient.onMessageNew((payload: SocketMessagePayload) => {
-      if (payload.message.conversationId === conversationId) {
-        console.log('[useSocketMessages] New message in conversation', conversationId);
-        // Invalidate to refetch messages
-        queryClient.invalidateQueries({
-          queryKey: ['messages', conversationId],
-        });
-      }
-    });
-
-    // Listen for message status updates in this conversation
-    const unsubMessageStatus = socketClient.onMessageStatus((payload: SocketMessageStatusPayload) => {
-      if (payload.conversationId === conversationId) {
-        console.log('[useSocketMessages] Message status update in conversation', conversationId);
-        // Invalidate to refetch messages with updated status
-        queryClient.invalidateQueries({
-          queryKey: ['messages', conversationId],
-        });
-      }
-    });
-
-    // Cleanup listeners
-    return () => {
-      unsubMessageNew();
-      unsubMessageStatus();
-    };
-  }, [conversationId, queryClient]);
 }
 
 /**
@@ -232,4 +192,40 @@ export function useUserStatus(onStatusChange?: (payload: SocketUserStatusPayload
 
     return unsubscribe;
   }, [onStatusChange]);
+}
+
+/**
+ * Hook to sync incoming messages to cache (for real-time updates)
+ */
+export function useIncomingMessages(conversationId: number | null) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!conversationId) return;
+
+    // Listen for new messages in this conversation
+    const unsubMessageNew = socketClient.onMessageNew((payload: SocketMessagePayload) => {
+      if (payload.message.conversationId === conversationId) {
+        // Invalidate to refetch fresh messages from API
+        queryClient.invalidateQueries({
+          queryKey: ['messages', conversationId],
+        });
+      }
+    });
+
+    // Listen for message status updates
+    const unsubMessageStatus = socketClient.onMessageStatus((payload: SocketMessageStatusPayload) => {
+      if (payload.conversationId === conversationId) {
+        // Invalidate to refetch with updated status
+        queryClient.invalidateQueries({
+          queryKey: ['messages', conversationId],
+        });
+      }
+    });
+
+    return () => {
+      unsubMessageNew();
+      unsubMessageStatus();
+    };
+  }, [conversationId, queryClient]);
 }

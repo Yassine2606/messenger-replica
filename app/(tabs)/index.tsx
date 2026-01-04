@@ -1,6 +1,6 @@
-import React, { useCallback } from 'react';
+import React from 'react';
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useConversations } from '@/hooks/useConversation';
@@ -11,7 +11,7 @@ import type { Conversation } from '@/models';
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const { data: user } = useProfile();
-  const { data: conversations = [], isLoading, error, refetch } = useConversations();
+  const { data: conversations = [], isLoading, error } = useConversations();
 
   console.log('[ChatsScreen] Render:', { 
     user: user?.name, 
@@ -19,14 +19,6 @@ export default function ChatsScreen() {
     isLoading,
     hasError: !!error 
   });
-
-  // Refetch conversations when screen gains focus
-  useFocusEffect(
-    useCallback(() => {
-      console.log('[ChatsScreen] Screen focused, refetching...');
-      refetch();
-    }, [refetch])
-  );
 
   const handleConversationPress = (conversationId: number) => {
     router.push({

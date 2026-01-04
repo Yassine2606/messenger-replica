@@ -1,16 +1,7 @@
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import { apiClient } from '@/services';
-import { useAuth } from './AuthContext';
-import { useProfile } from '@/hooks/useAuth';
-import type {
-  SocketMessagePayload,
-  SocketMessageStatusPayload,
-  SocketConversationUpdatePayload,
-  SocketUserStatusPayload,
-  Message,
-} from '@/models';
 
 interface SocketContextType {
   isConnected: boolean;
@@ -21,172 +12,75 @@ const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const { isAuthenticated } = useAuth();
-  const { data: user } = useProfile();
-  const isConnectedRef = useRef(false);
-  const userRef = useRef(user);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
+    const token = apiClient.getToken();
+    if (!token) {
       socketClient.disconnect();
-      isConnectedRef.current = false;
+      setIsConnected(false);
       return;
     }
 
-    // Connect socket with token
-    const token = apiClient.getToken();
-    if (token && !socketClient.isConnected()) {
-      console.log('[SocketProvider] Connecting socket');
+    if (!socketClient.isConnected()) {
       socketClient.connect(token);
-      isConnectedRef.current = true;
     }
 
-    // Setup global socket listeners
-    const cleanupFns: (() => void)[] = [];
+    // Listen to connection state changes
+    const unsubConnect = socketClient.subscribe('connected', () => {
+      setIsConnected(true);
+    });
 
-    // Handle new messages
-    cleanupFns.push(
-      socketClient.onMessageNew((payload: SocketMessagePayload) => {
-        console.log('[SocketProvider] New message received:', payload.message.id);
-        
-        // Optimistically add message to cache
-        queryClient.setQueryData<Message[]>(
-          ['messages', payload.message.conversationId],
-          (old = []) => {
-            // Prevent duplicates
-            const exists = old.some((m) => m.id === payload.message.id);
-            if (exists) {
-              return old;
-            }
-            return [...old, payload.message];
-          }
-        );
-        
-        // Update conversations list with new lastMessage and unreadCount
-        queryClient.setQueryData<any[]>(
-          ['conversations'],
-          (old = []) => {
-            return old.map((conv) => {
-              if (conv.id === payload.message.conversationId) {
-                return {
-                  ...conv,
-                  lastMessage: payload.message,
-                  lastMessageAt: payload.message.createdAt,
-                  // Increment unreadCount if message is from other user
-                  unreadCount: payload.message.senderId !== userRef.current?.id 
-                    ? (conv.unreadCount || 0) + 1 
-                    : conv.unreadCount,
-                };
-              }
-              return conv;
-            });
-          }
-        );
-      })
-    );
+    const unsubDisconnect = socketClient.subscribe('disconnected', () => {
+      setIsConnected(false);
+    });
 
-    // Handle message status updates
-    cleanupFns.push(
-      socketClient.onMessageStatus((payload: SocketMessageStatusPayload) => {
-        console.log('[SocketProvider] Message status update:', payload);
-        
-        // Update message status in cache directly
-        queryClient.setQueryData<Message[]>(
-          ['messages', payload.conversationId],
-          (old = []) => {
-            return old.map((msg) => {
-              if (msg.id === payload.messageId) {
-                // Ensure reads array exists
-                const existingReads = msg.reads || [];
-                
-                // Find existing read for this user
-                const existingReadIndex = existingReads.findIndex(
-                  (read) => read.userId === payload.userId
-                );
-                
-                let updatedReads;
-                if (existingReadIndex !== -1) {
-                  // Update existing read
-                  updatedReads = existingReads.map((read, idx) => {
-                    if (idx === existingReadIndex) {
-                      return {
-                        ...read,
-                        status: payload.status,
-                        readAt: payload.readAt,
-                      };
-                    }
-                    return read;
-                  });
-                } else {
-                  // Add new read status (shouldn't normally happen, but handle it)
-                  updatedReads = [
-                    ...existingReads,
-                    {
-                      id: 0, // Temporary ID
-                      messageId: payload.messageId,
-                      userId: payload.userId,
-                      status: payload.status,
-                      readAt: payload.readAt,
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString(),
-                    },
-                  ];
-                }
-                
-                return {
-                  ...msg,
-                  reads: updatedReads,
-                };
-              }
-              return msg;
-            });
-          }
-        );
-      })
-    );
+    // Event-based invalidation for real-time updates
+    // Only invalidate queries that have active observers
+    const unsubMessageNew = socketClient.subscribe('message:new', (payload: any) => {
+      // Invalidate the specific conversation's messages to refetch with new message
+      queryClient.invalidateQueries({
+        queryKey: ['messages', payload.message.conversationId],
+      });
+      // Also invalidate conversations list for last message update
+      queryClient.invalidateQueries({
+        queryKey: ['conversations'],
+      });
+    });
 
-    // Handle conversation updates
-    cleanupFns.push(
-      socketClient.onConversationUpdated((payload: SocketConversationUpdatePayload) => {
-        console.log('[SocketProvider] Conversation updated:', payload.conversation.id);
-        
-        // Invalidate specific conversation and list
-        queryClient.invalidateQueries({
-          queryKey: ['conversation', payload.conversation.id],
-        });
-        queryClient.invalidateQueries({
-          queryKey: ['conversations'],
-        });
-      })
-    );
+    const unsubMessageStatus = socketClient.subscribe('message:status', (payload: any) => {
+      queryClient.invalidateQueries({
+        queryKey: ['messages', payload.conversationId],
+      });
+    });
 
-    // Handle user status changes
-    cleanupFns.push(
-      socketClient.onUserStatus((payload: SocketUserStatusPayload) => {
-        console.log('[SocketProvider] User status changed:', payload.userId, payload.status);
-        
-        // Invalidate conversations to update participant status
-        queryClient.invalidateQueries({
-          queryKey: ['conversations'],
-        });
-      })
-    );
+    const unsubConversationUpdated = socketClient.subscribe('conversation:updated', (payload: any) => {
+      queryClient.invalidateQueries({
+        queryKey: ['conversations'],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['conversations', payload.conversation.id],
+      });
+    });
 
-    // Cleanup on unmount or auth change
+    const unsubUserStatus = socketClient.subscribe('user:status', () => {
+      queryClient.invalidateQueries({
+        queryKey: ['conversations'],
+      });
+    });
+
     return () => {
-      console.log('[SocketProvider] Cleaning up socket listeners');
-      cleanupFns.forEach((cleanup) => cleanup());
-      socketClient.disconnect();
-      isConnectedRef.current = false;
+      unsubConnect();
+      unsubDisconnect();
+      unsubMessageNew();
+      unsubMessageStatus();
+      unsubConversationUpdated();
+      unsubUserStatus();
     };
-  }, [isAuthenticated, queryClient]);
+  }, []);
 
   const value: SocketContextType = {
-    isConnected: isConnectedRef.current,
+    isConnected,
     socket: socketClient,
   };
 

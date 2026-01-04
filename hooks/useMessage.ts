@@ -18,6 +18,8 @@ export function useMessages(conversationId: number, options: GetMessagesOptions 
 
 /**
  * Get messages with infinite scroll
+ * Initial load: gets 30 newest messages
+ * Pagination: loads older messages
  */
 export function useInfiniteMessages(conversationId: number) {
   return useInfiniteQuery({
@@ -25,11 +27,15 @@ export function useInfiniteMessages(conversationId: number) {
     queryFn: ({ pageParam }) =>
       messageService.getMessages(conversationId, {
         limit: 30,
-        before: pageParam,
+        before: pageParam, // undefined on first load, then oldest message ID for next pages
       }),
     getNextPageParam: (lastPage) => {
-      if (lastPage.length === 0) return undefined;
-      return lastPage[0].id; // Oldest message ID for pagination
+      // lastPage is in chronological order (oldest→newest)
+      // To get even older messages, use the ID of the oldest message (first in array)
+      if (!lastPage || !Array.isArray(lastPage) || lastPage.length === 0) {
+        return undefined;
+      }
+      return lastPage[0].id; // Oldest message ID for next pagination
     },
     initialPageParam: undefined as number | undefined,
     enabled: !!conversationId,
@@ -45,20 +51,37 @@ export function useSendMessage() {
   return useMutation({
     mutationFn: (data: SendMessageData) => messageService.sendMessage(data),
     onSuccess: (message, variables) => {
-      // Optimistically add message to cache immediately
-      queryClient.setQueryData<Message[]>(
+      // Add new message to infinite query cache
+      queryClient.setQueryData<any>(
         MESSAGES_KEY(variables.conversationId),
-        (old = []) => {
-          // Check if message already exists (from socket)
-          const exists = old.some((m) => m.id === message.id);
-          if (exists) {
-            return old;
+        (oldData: any) => {
+          if (!oldData || !oldData.pages) return oldData;
+          
+          // Check if message already exists in any page
+          const messageExists = oldData.pages.some((page: any[]) =>
+            page.some((msg: any) => msg.id === message.id)
+          );
+
+          if (messageExists) {
+            return oldData; // Don't add duplicates
           }
-          return [...old, message];
+
+          // Add message to first page (newest messages)
+          // First page contains newest messages for display
+          const newPages = [
+            [...(oldData.pages[0] || []), message],
+            ...(oldData.pages.slice(1) || []),
+          ];
+
+          return {
+            ...oldData,
+            pages: newPages,
+            pageParams: oldData.pageParams,
+          };
         }
       );
 
-      // Invalidate conversations list to update last message (not messages, we just updated them)
+      // Invalidate conversations list to update last message
       queryClient.invalidateQueries({
         queryKey: ['conversations'],
       });
@@ -96,12 +119,28 @@ export function useDeleteMessage() {
     mutationFn: (messageId: number) => messageService.deleteMessage(messageId),
     onSuccess: (_, messageId) => {
       // Update all message caches to mark as deleted
-      queryClient.setQueriesData<Message[]>(
+      queryClient.setQueriesData<any>(
         { queryKey: ['messages'] },
-        (old) =>
-          old?.map((msg) =>
-            msg.id === messageId ? { ...msg, isDeleted: true } : msg
-          )
+        (old: any) => {
+          // Handle infinite query format
+          if (old?.pages && Array.isArray(old.pages)) {
+            return {
+              ...old,
+              pages: old.pages.map((page: Message[]) =>
+                page.map((msg) =>
+                  msg.id === messageId ? { ...msg, isDeleted: true } : msg
+                )
+              ),
+            };
+          }
+          // Handle regular query format
+          if (Array.isArray(old)) {
+            return old.map((msg) =>
+              msg.id === messageId ? { ...msg, isDeleted: true } : msg
+            );
+          }
+          return old;
+        }
       );
     },
   });
@@ -114,29 +153,26 @@ export function useAddMessage() {
   const queryClient = useQueryClient();
 
   return (message: Message) => {
-    queryClient.setQueryData<Message[]>(
-      MESSAGES_KEY(message.conversationId),
-      (old = []) => {
-        // Prevent duplicates
-        const exists = old.some((m) => m.id === message.id);
-        return exists ? old : [...old, message];
-      }
-    );
-
-    // Update infinite query if exists
+    // Update infinite query cache with new message
     queryClient.setQueryData<any>(
       MESSAGES_KEY(message.conversationId),
       (old: any) => {
-        if (!old?.pages) return old;
+        if (!old || !old.pages) return old;
 
-        const newPages = [...old.pages];
-        const lastPage = newPages[newPages.length - 1];
-        if (lastPage) {
-          const exists = lastPage.some((m: Message) => m.id === message.id);
-          if (!exists) {
-            newPages[newPages.length - 1] = [...lastPage, message];
+        // Check if message already exists
+        let messageExists = false;
+        for (const page of old.pages) {
+          if (page.some((m: Message) => m.id === message.id)) {
+            messageExists = true;
+            break;
           }
         }
+
+        if (messageExists) return old;
+
+        // Add to first page (most recent messages)
+        const newPages = [...old.pages];
+        newPages[0] = [message, ...newPages[0]];
 
         return { ...old, pages: newPages };
       }
@@ -151,10 +187,12 @@ export function useUpdateMessageStatus() {
   const queryClient = useQueryClient();
 
   return (conversationId: number, messageId: number, userId: number, status: string, readAt?: string) => {
-    queryClient.setQueryData<Message[]>(
-      MESSAGES_KEY(conversationId),
-      (old = []) =>
-        old.map((msg) => {
+    // Update all message queries for this conversation
+    queryClient.setQueriesData<Message[]>(
+      { queryKey: MESSAGES_KEY(conversationId) },
+      (old) => {
+        if (!old || !Array.isArray(old)) return old || [];
+        return old.map((msg) => {
           if (msg.id === messageId) {
             const reads = msg.reads || [];
             const readIndex = reads.findIndex((r) => r.userId === userId);
@@ -176,43 +214,10 @@ export function useUpdateMessageStatus() {
             return { ...msg, reads: [...reads] };
           }
           return msg;
-        })
-    );
-
-    // Update infinite query if exists
-    queryClient.setQueryData<any>(
-      MESSAGES_KEY(conversationId),
-      (old: any) => {
-        if (!old?.pages) return old;
-
-        const newPages = old.pages.map((page: Message[]) =>
-          page.map((msg) => {
-            if (msg.id === messageId) {
-              const reads = msg.reads || [];
-              const readIndex = reads.findIndex((r) => r.userId === userId);
-
-              if (readIndex >= 0) {
-                reads[readIndex] = { ...reads[readIndex], status: status as any, readAt };
-              } else {
-                reads.push({
-                  id: 0,
-                  messageId,
-                  userId,
-                  status: status as any,
-                  readAt,
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString(),
-                });
-              }
-
-              return { ...msg, reads: [...reads] };
-            }
-            return msg;
-          })
-        );
-
-        return { ...old, pages: newPages };
+        });
       }
     );
+
+    // Update infinite query if exists (handled by setQueriesData above with partial key matcher)
   };
 }

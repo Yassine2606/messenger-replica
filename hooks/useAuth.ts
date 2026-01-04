@@ -10,10 +10,10 @@ export function useLogin() {
 
   return useMutation({
     mutationFn: async (data: LoginData): Promise<AuthResponse> => {
-      return authService.login(data);
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(PROFILE_QUERY_KEY, data.user);
+      const response = await authService.login(data);
+      // Cache the user immediately
+      queryClient.setQueryData(PROFILE_QUERY_KEY, response.user);
+      return response;
     },
   });
 }
@@ -23,10 +23,10 @@ export function useRegister() {
 
   return useMutation({
     mutationFn: async (data: RegisterData): Promise<AuthResponse> => {
-      return authService.register(data);
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(PROFILE_QUERY_KEY, data.user);
+      const response = await authService.register(data);
+      // Cache the user immediately
+      queryClient.setQueryData(PROFILE_QUERY_KEY, response.user);
+      return response;
     },
   });
 }
@@ -35,11 +35,12 @@ export function useProfile() {
   return useQuery({
     queryKey: PROFILE_QUERY_KEY,
     queryFn: () => authService.getProfile(),
-    staleTime: 5 * 60 * 1000, // 5 minutes - don't refetch during this time
-    gcTime: 10 * 60 * 1000, // 10 minutes - keep in cache
+    staleTime: Infinity, // Never consider stale - only refetch on explicit invalidation
+    gcTime: 24 * 60 * 60 * 1000, // Keep in cache for 24 hours
     retry: false, // Don't retry on auth errors
-    refetchOnMount: false, // Don't refetch on mount if data is fresh
+    refetchOnMount: false, // Don't refetch on mount
     refetchOnWindowFocus: false, // Don't refetch on focus
+    refetchOnReconnect: false, // Don't refetch on reconnect
   });
 }
 
@@ -61,12 +62,7 @@ export function useUpdateProfile() {
 }
 
 export function useLogout() {
-  const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: () => authService.logout(),
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: AUTH_QUERY_KEY });
-    },
   });
 }

@@ -7,8 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 import type { Message } from '@/models';
 import { MessageStatus } from './MessageStatus';
 import { ImageViewer } from './ImageViewer';
+import { scheduleOnRN } from 'react-native-worklets';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3000';
 
 interface MessageItemProps {
   message: Message;
@@ -18,6 +19,7 @@ interface MessageItemProps {
   nextMessage?: Message;
   currentUserId?: number;
   onReply?: (message: Message) => void;
+  onLongPress?: (message: Message) => void;
   sharedRowTranslateX: SharedValue<number>;
   sharedTimestampOpacity: SharedValue<number>;
 }
@@ -109,6 +111,7 @@ export function MessageItem({
   nextMessage,
   currentUserId,
   onReply,
+  onLongPress,
   sharedRowTranslateX,
   sharedTimestampOpacity,
 }: MessageItemProps) {
@@ -133,6 +136,10 @@ export function MessageItem({
       onReply(message);
     }
   };
+
+  // Track long press state
+  const longPressStartTime = React.useRef<number>(0);
+  const longPressFired = React.useRef<boolean>(false);
 
   // GESTURE 1: Row-level gesture for timestamp reveal (lower priority)
   // Triggers when dragging outside bubble - moves ALL messages in list together
@@ -173,6 +180,34 @@ export function MessageItem({
       bubbleTranslateX.value = withTiming(0, { duration: 200 });
       replyIconOpacity.value = withTiming(0, { duration: 200 });
     });
+
+  // GESTURE 3: Long press for actions (delete/edit)
+  // Fires after 1 second while still holding (not on release)
+  const longPressGesture = Gesture.Pan()
+    .enabled(!message.isDeleted && !!onLongPress)
+    .minDistance(0)
+    .maxPointers(1)
+    .onStart(() => {
+      longPressStartTime.current = Date.now();
+      longPressFired.current = false;
+    })
+    .onUpdate(() => {
+      // Fire once when 1 second threshold is reached
+      if (!longPressFired.current && Date.now() - longPressStartTime.current >= 1000) {
+        longPressFired.current = true;
+        if (onLongPress) {
+          scheduleOnRN(onLongPress, message);
+        }
+      }
+    })
+    .onEnd(() => {
+      longPressFired.current = false;
+    });
+
+  // Combine gestures: long press has priority, but both can work in different scenarios
+  // If user holds without moving → long press fires after 1 second
+  // If user swipes immediately → bubble gesture takes over for reply
+  const combinedGesture = Gesture.Exclusive(longPressGesture, bubbleGesture);
 
   // Animated styles
   const rowAnimatedStyle = useAnimatedStyle(() => ({
@@ -227,7 +262,7 @@ export function MessageItem({
           </Animated.View>
 
           {/* Message bubble with bubble-level gesture */}
-          <GestureDetector gesture={bubbleGesture}>
+          <GestureDetector gesture={combinedGesture}>
             <Animated.View style={bubbleAnimatedStyle}>
               {message.type === 'image' && message.mediaUrl ? (
                 // Image without bubble background
@@ -250,9 +285,10 @@ export function MessageItem({
                   )}
                   <Pressable onPress={() => setImageViewerVisible(true)}>
                     <Image
-                      source={{ uri: `${API_URL.replace('/api', '')}${message.mediaUrl}` }}
+                      source={{ uri: `${API_BASE_URL}${message.mediaUrl}` }}
                       style={{ width: 200, height: 200, borderRadius: 12 }}
                       contentFit="cover"
+                      onError={(error) => console.error('[MessageItem] Image load error:', error, 'URL:', `${API_BASE_URL}${message.mediaUrl}`)}
                     />
                   </Pressable>
                   {message.content && (
@@ -344,7 +380,7 @@ export function MessageItem({
       {message.type === 'image' && message.mediaUrl && (
         <ImageViewer
           visible={imageViewerVisible}
-          imageUri={`${API_URL.replace('/api', '')}${message.mediaUrl}`}
+          imageUri={`${API_BASE_URL}${message.mediaUrl}`}
           onClose={() => setImageViewerVisible(false)}
         />
       )}

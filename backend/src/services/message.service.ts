@@ -59,13 +59,14 @@ export class MessageService {
       const otherParticipants = (participants || []).filter((p: User) => p.id !== data.senderId);
 
       if (otherParticipants.length > 0) {
+        // Use ignoreDuplicates to prevent constraint violations if reads already exist
         await MessageRead.bulkCreate(
           otherParticipants.map((p: User) => ({
             messageId: message.id,
             userId: p.id,
             status: ReadStatus.SENT, // Will be updated to DELIVERED when recipient connects
           })),
-          { transaction }
+          { transaction, ignoreDuplicates: true }
         );
       }
 
@@ -93,10 +94,19 @@ export class MessageService {
     const limit = Math.min(options.limit || 30, 100);
     const where: any = { conversationId, isDeleted: false };
 
+    // Use cursor-based pagination with ID
+    // before: get messages older than this ID (smaller IDs)
+    // after: get messages newer than this ID (larger IDs)
     if (options.before) {
+      // Get messages with ID less than 'before' (older messages)
       where.id = { [Op.lt]: options.before };
     } else if (options.after) {
+      // Get messages with ID greater than 'after' (newer messages)
       where.id = { [Op.gt]: options.after };
+    } else {
+      // On initial load with no pagination param, get the newest messages
+      // by limiting and ordering descending, then we'll reverse later
+      // This ensures we load the most recent messages first
     }
 
     const messages = await Message.findAll({
@@ -124,49 +134,78 @@ export class MessageService {
           attributes: ['id', 'userId', 'status', 'readAt'],
         },
       ],
-      order: [['createdAt', 'DESC']],
+      // When before/after are specified, order ASC (chronological)
+      // When neither specified (initial load), order DESC to get newest first
+      order: options.before || options.after ? [['id', 'ASC']] : [['id', 'DESC']],
       limit,
+      subQuery: false, // Important: avoid Sequelize subquery issues
     });
 
-    return messages.reverse().map((m) => messageToDTO(m));
+    // Return in appropriate order
+    // For before/after pagination: chronological order (oldest to newest)
+    // For initial load: reverse DESC order to get chronological (oldest to newest)
+    if (!options.before && !options.after) {
+      messages.reverse();
+    }
+    
+    return messages.map((m) => messageToDTO(m));
   }
 
   /**
    * Mark message as read (batch operation)
    */
   async markAsRead(messageIds: number[], userId: number): Promise<void> {
-    const existingReads = await MessageRead.findAll({
-      where: {
-        messageId: { [Op.in]: messageIds },
-        userId,
-      },
-    });
+    if (messageIds.length === 0) return;
 
-    for (const read of existingReads) {
-      if (read.status !== ReadStatus.READ) {
-        read.status = ReadStatus.READ;
-        read.readAt = new Date();
-        await read.save();
+    // Use transaction with row-level locking to prevent race conditions
+    await sequelize.transaction(async (transaction: Transaction) => {
+      const existingReads = await MessageRead.findAll({
+        where: {
+          messageId: { [Op.in]: messageIds },
+          userId,
+        },
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+
+      const updatePromises = [];
+      for (const read of existingReads) {
+        if (read.status !== ReadStatus.READ) {
+          read.status = ReadStatus.READ;
+          read.readAt = new Date();
+          updatePromises.push(read.save({ transaction }));
+        }
       }
-    }
+
+      await Promise.all(updatePromises);
+    });
   }
 
   /**
    * Mark messages as delivered (batch operation)
    */
   async markAsDelivered(messageIds: number[], userId: number): Promise<void> {
-    const existingReads = await MessageRead.findAll({
-      where: {
-        messageId: { [Op.in]: messageIds },
-        userId,
-        status: ReadStatus.SENT,
-      },
-    });
+    if (messageIds.length === 0) return;
 
-    for (const read of existingReads) {
-      read.status = ReadStatus.DELIVERED;
-      await read.save();
-    }
+    // Use transaction with row-level locking to prevent race conditions
+    await sequelize.transaction(async (transaction: Transaction) => {
+      const existingReads = await MessageRead.findAll({
+        where: {
+          messageId: { [Op.in]: messageIds },
+          userId,
+          status: ReadStatus.SENT,
+        },
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+
+      const updatePromises = existingReads.map((read) => {
+        read.status = ReadStatus.DELIVERED;
+        return read.save({ transaction });
+      });
+
+      await Promise.all(updatePromises);
+    });
   }
 
   /**
@@ -196,16 +235,32 @@ export class MessageService {
    * Returns array of message IDs that were marked as read
    */
   async markConversationAsRead(conversationId: number, userId: number): Promise<number[]> {
-    const messages = await Message.findAll({
-      where: { conversationId, isDeleted: false },
-      attributes: ['id'],
+    // Find all unread messages in the conversation
+    const unreadReads = await MessageRead.findAll({
+      where: {
+        userId,
+        status: {
+          [Op.in]: [ReadStatus.SENT, ReadStatus.DELIVERED],
+        },
+      },
+      include: [
+        {
+          model: Message,
+          as: 'message',
+          where: {
+            conversationId,
+            isDeleted: false,
+          },
+          attributes: ['id'],
+        },
+      ],
     });
 
-    const messageIds = messages.map((m) => m.id);
-    if (messageIds.length === 0) {
+    if (unreadReads.length === 0) {
       return [];
     }
 
+    const messageIds = unreadReads.map((read) => read.messageId);
     await this.markAsRead(messageIds, userId);
     return messageIds;
   }

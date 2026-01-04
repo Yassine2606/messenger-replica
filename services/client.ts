@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 
@@ -21,21 +21,18 @@ class ApiClient {
   }
 
   /**
-   * Initialize client - load token from secure storage
+   * Initialize client - load token from storage
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
-      console.log('[ApiClient] Already initialized, token:', this.token ? 'present' : 'none');
       return;
     }
 
     try {
-      const storedToken = await SecureStore.getItemAsync('auth_token');
-      console.log('[ApiClient] Loaded token from storage:', storedToken ? `${storedToken.substring(0, 20)}...` : 'none');
+      const storedToken = await AsyncStorage.getItem('auth_token');
       if (storedToken) {
         this.token = storedToken;
         this.client.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
-        console.log('[ApiClient] Token set in headers');
       }
       this.initialized = true;
     } catch (error) {
@@ -48,30 +45,21 @@ class ApiClient {
    * Setup request/response interceptors
    */
   private setupInterceptors(): void {
-    // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        // Always set token if we have one
-        if (this.token) {
-          if (!config.headers) {
-            config.headers = {} as any;
-          }
+        if (this.token && !config.headers['Authorization']) {
           config.headers['Authorization'] = `Bearer ${this.token}`;
         }
-        console.log('[ApiClient] Request:', config.url, 'Auth:', config.headers?.['Authorization'] ? 'present' : 'MISSING', 'Token in memory:', this.token ? 'yes' : 'no');
         return config;
       },
       (error) => Promise.reject(error)
     );
 
-    // Response interceptor
     this.client.interceptors.response.use(
       (response) => response,
       async (error) => {
-        // Only clear token if we had one and it was rejected
-        // This prevents clearing during initialization race conditions
+        console.error('[ApiClient] Error:', error.config?.method?.toUpperCase(), error.config?.url, 'Status:', error.response?.status);
         if (error.response?.status === 401 && this.token) {
-          console.log('[ApiClient] 401 error with token present, clearing...');
           await this.clearToken();
         }
         return Promise.reject(error);
@@ -86,7 +74,7 @@ class ApiClient {
     this.token = token;
     this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     try {
-      await SecureStore.setItemAsync('auth_token', token);
+      await AsyncStorage.setItem('auth_token', token);
     } catch (error) {
       console.error('Error saving auth token:', error);
     }
@@ -116,7 +104,7 @@ class ApiClient {
     this.token = null;
     delete this.client.defaults.headers.common['Authorization'];
     try {
-      await SecureStore.deleteItemAsync('auth_token');
+      await AsyncStorage.removeItem('auth_token');
     } catch (error) {
       console.error('Error clearing auth token:', error);
     }
@@ -137,9 +125,19 @@ class ApiClient {
   }
 
   /**
+   * Ensure initialized before making request
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+  }
+
+  /**
    * Generic GET request
    */
   async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    await this.ensureInitialized();
     const response: AxiosResponse<T> = await this.client.get(url, config);
     return response.data;
   }
@@ -148,6 +146,7 @@ class ApiClient {
    * Generic POST request
    */
   async post<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    await this.ensureInitialized();
     const response: AxiosResponse<T> = await this.client.post(url, data, config);
     return response.data;
   }
@@ -156,6 +155,7 @@ class ApiClient {
    * Generic PUT request
    */
   async put<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    await this.ensureInitialized();
     const response: AxiosResponse<T> = await this.client.put(url, data, config);
     return response.data;
   }
@@ -164,6 +164,7 @@ class ApiClient {
    * Generic DELETE request
    */
   async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    await this.ensureInitialized();
     const response: AxiosResponse<T> = await this.client.delete(url, config);
     return response.data;
   }
@@ -172,6 +173,7 @@ class ApiClient {
    * Generic PATCH request
    */
   async patch<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    await this.ensureInitialized();
     const response: AxiosResponse<T> = await this.client.patch(url, data, config);
     return response.data;
   }

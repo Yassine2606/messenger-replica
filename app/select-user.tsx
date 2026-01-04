@@ -18,8 +18,13 @@ export default function SelectUserScreen() {
         pathname: '/chat/[id]',
         params: { id: conversation.id },
       });
-    } catch (error) {
-      console.error('Failed to create/get conversation:', error);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const errorMsg = error?.response?.data?.error || error?.message;
+      console.error('[SelectUser] Failed:', status, errorMsg);
+      if (status === 404) {
+        console.error('[SelectUser] User not found. Make sure user exists in database.');
+      }
     }
   };
 

@@ -13,6 +13,7 @@ export class SocketManager {
   private io: Server;
   private userSessions: Map<number, Set<string>> = new Map();
   private activeConversationViewers: Map<number, Set<number>> = new Map();
+  private socketConversations: Map<string, Set<number>> = new Map(); // Track which conversations each socket has joined
 
   constructor(httpServer: HTTPServer) {
     this.io = new Server(httpServer, {
@@ -60,6 +61,9 @@ export class SocketManager {
       }
       this.userSessions.get(userId)!.add(socket.id);
 
+      // Initialize socket conversation tracking
+      this.socketConversations.set(socket.id, new Set());
+
       // Mark pending messages as delivered when user connects
       await this.handleUserConnected(userId);
 
@@ -87,6 +91,28 @@ export class SocketManager {
     try {
       const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } = data;
 
+      // Validate required fields
+      if (!conversationId || typeof conversationId !== 'number') {
+        socket.emit('error', { event: 'message:send', message: 'Valid conversation ID required' });
+        return;
+      }
+
+      if (!type || typeof type !== 'string') {
+        socket.emit('error', { event: 'message:send', message: 'Message type required' });
+        return;
+      }
+
+      // Validate content based on type
+      if (type === 'text' && (!content || typeof content !== 'string' || content.trim().length === 0)) {
+        socket.emit('error', { event: 'message:send', message: 'Text content required' });
+        return;
+      }
+
+      if ((type === 'image' || type === 'audio') && (!mediaUrl || typeof mediaUrl !== 'string')) {
+        socket.emit('error', { event: 'message:send', message: 'Media URL required' });
+        return;
+      }
+
       const message = await messageService.sendMessage({
         conversationId,
         senderId: userId,
@@ -102,62 +128,57 @@ export class SocketManager {
       const messageConversation = await conversationService.getConversation(conversationId, userId);
       const messageParticipants = messageConversation.participants || [];
 
-      // Mark as DELIVERED for online recipients (excluding sender)
+      // Process status updates for each participant atomically
+      const statusUpdates: SocketMessageStatusPayload[] = [];
+      const activeViewers = this.activeConversationViewers.get(conversationId);
+
       for (const participant of messageParticipants) {
         if (participant.id && participant.id !== userId) {
           const isOnline = this.userSessions.has(participant.id);
+          const isActiveViewer = activeViewers?.has(participant.id);
           
-          if (isOnline) {
-            // Recipient is connected - mark as DELIVERED
+          if (isActiveViewer) {
+            // User is actively viewing - mark as READ
+            await messageService.markAsRead([message.id], participant.id);
+            statusUpdates.push({
+              messageId: message.id,
+              conversationId,
+              status: ReadStatus.READ,
+              userId: participant.id,
+              readAt: new Date().toISOString(),
+            });
+          } else if (isOnline) {
+            // User is online but not viewing - mark as DELIVERED
             await messageService.markAsDelivered([message.id], participant.id);
-
-            // Broadcast delivery status
-            const deliveryPayload: SocketMessageStatusPayload = {
+            statusUpdates.push({
               messageId: message.id,
               conversationId,
               status: ReadStatus.DELIVERED,
               userId: participant.id,
               readAt: new Date().toISOString(),
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', deliveryPayload);
+            });
           }
+          // If offline, status remains SENT (set during message creation)
         }
       }
 
-      // Auto-mark as read for active viewers (excluding sender)
-      const activeViewers = this.activeConversationViewers.get(conversationId);
-      if (activeViewers) {
-        for (const viewerId of activeViewers) {
-          if (viewerId !== userId) {
-            // Mark as read for this viewer
-            await messageService.markAsRead([message.id], viewerId);
-
-            // Broadcast read status to conversation
-            const statusPayload: SocketMessageStatusPayload = {
-              messageId: message.id,
-              conversationId,
-              status: ReadStatus.READ,
-              userId: viewerId,
-              readAt: new Date().toISOString(),
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', statusPayload);
-          }
-        }
-      }
-
-      // Reload message with updated reads to get final state
+      // Reload message with final state
       const reloadedMessage = await messageService.getMessageWithRelations(message.id);
       const messageWithReads = messageToDTO(reloadedMessage);
       
-      // Emit message with complete reads array to all participants in conversation
+      // Emit message once with complete reads array
       const payload: SocketMessagePayload = {
         message: messageWithReads,
         conversationId,
       };
-
       this.io.to(`conversation:${conversationId}`).emit('message:new', payload);
 
-      // Broadcast conversation update to all participants (reuse messageParticipants)
+      // Emit status updates (for real-time UI updates)
+      for (const statusUpdate of statusUpdates) {
+        this.io.to(`conversation:${conversationId}`).emit('message:status', statusUpdate);
+      }
+
+      // Broadcast conversation update to all participants
       await this.broadcastConversationUpdate(conversationId, messageParticipants);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to send message';
@@ -174,10 +195,23 @@ export class SocketManager {
   private async handleMessageRead(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
     try {
       const { messageId, messageIds, conversationId } = data;
+      
+      // Validate conversation ID
+      if (!conversationId || typeof conversationId !== 'number') {
+        socket.emit('error', { event: 'message:read', message: 'Valid conversation ID required' });
+        return;
+      }
+
       const idsToMark = messageIds || (messageId ? [messageId] : []);
 
       if (idsToMark.length === 0) {
         socket.emit('error', { event: 'message:read', message: 'No message IDs provided' });
+        return;
+      }
+
+      // Validate message IDs
+      if (!Array.isArray(idsToMark) || !idsToMark.every(id => typeof id === 'number' && id > 0)) {
+        socket.emit('error', { event: 'message:read', message: 'Invalid message IDs' });
         return;
       }
 
@@ -253,6 +287,13 @@ export class SocketManager {
     try {
       const { conversationId } = data;
 
+      // Prevent duplicate joins from same socket
+      const socketRooms = this.socketConversations.get(socket.id);
+      if (socketRooms?.has(conversationId)) {
+        // Already joined, skip
+        return;
+      }
+
       // Verify user is participant
       const conversation = await conversationService.getConversation(conversationId, userId);
       if (!conversation) {
@@ -262,34 +303,40 @@ export class SocketManager {
 
       // Join socket to conversation room
       socket.join(`conversation:${conversationId}`);
+      socketRooms?.add(conversationId);
 
-      // Track user as active viewer
+      // Track user as active viewer (only if not already tracked)
       if (!this.activeConversationViewers.has(conversationId)) {
         this.activeConversationViewers.set(conversationId, new Set());
       }
+      const wasNotViewing = !this.activeConversationViewers.get(conversationId)!.has(userId);
       this.activeConversationViewers.get(conversationId)!.add(userId);
 
-      // Auto-mark all messages in conversation as read
-      const markedMessages = await messageService.markConversationAsRead(conversationId, userId);
+      // Auto-mark all unread messages as read (only if user wasn't already viewing)
+      if (wasNotViewing) {
+        const markedMessages = await messageService.markConversationAsRead(conversationId, userId);
 
-      // Emit status updates for each marked message
-      const readAt = new Date().toISOString();
-      for (const messageId of markedMessages) {
-        const payload: SocketMessageStatusPayload = {
-          messageId,
-          conversationId,
-          status: ReadStatus.READ,
-          userId,
-          readAt,
-        };
-        this.io.to(`conversation:${conversationId}`).emit('message:status', payload);
+        // Emit status updates for each marked message
+        if (markedMessages.length > 0) {
+          const readAt = new Date().toISOString();
+          for (const messageId of markedMessages) {
+            const payload: SocketMessageStatusPayload = {
+              messageId,
+              conversationId,
+              status: ReadStatus.READ,
+              userId,
+              readAt,
+            };
+            this.io.to(`conversation:${conversationId}`).emit('message:status', payload);
+          }
+
+          // Broadcast conversation updates to all participants after marking as read
+          await this.broadcastConversationUpdate(conversationId, conversation.participants || []);
+        }
       }
 
-      // Broadcast conversation updates to all participants after marking as read
-      await this.broadcastConversationUpdate(conversationId, conversation.participants || []);
-
       // Broadcast that user is viewing conversation (for typing indicators, etc)
-      this.io.to(`conversation:${conversationId}`).emit('conversation:user-joined', {
+      socket.to(`conversation:${conversationId}`).emit('conversation:user-joined', {
         conversationId,
         userId,
       });
@@ -311,19 +358,37 @@ export class SocketManager {
 
       socket.leave(`conversation:${conversationId}`);
 
-      // Remove user from active viewers
-      const viewers = this.activeConversationViewers.get(conversationId);
-      if (viewers) {
-        viewers.delete(userId);
-        if (viewers.size === 0) {
-          this.activeConversationViewers.delete(conversationId);
+      // Remove from socket tracking
+      const socketRooms = this.socketConversations.get(socket.id);
+      socketRooms?.delete(conversationId);
+
+      // Check if user has any other sockets viewing this conversation
+      const userSockets = this.userSessions.get(userId);
+      let hasOtherSocketInConversation = false;
+      if (userSockets) {
+        for (const socketId of userSockets) {
+          if (socketId !== socket.id && this.socketConversations.get(socketId)?.has(conversationId)) {
+            hasOtherSocketInConversation = true;
+            break;
+          }
         }
       }
 
-      this.io.to(`conversation:${conversationId}`).emit('conversation:user-left', {
-        conversationId,
-        userId,
-      });
+      // Only remove from active viewers if no other socket is viewing
+      if (!hasOtherSocketInConversation) {
+        const viewers = this.activeConversationViewers.get(conversationId);
+        if (viewers) {
+          viewers.delete(userId);
+          if (viewers.size === 0) {
+            this.activeConversationViewers.delete(conversationId);
+          }
+        }
+
+        socket.to(`conversation:${conversationId}`).emit('conversation:user-left', {
+          conversationId,
+          userId,
+        });
+      }
     } catch (error) {
       socket.emit('error', {
         event: 'conversation:leave',
@@ -336,6 +401,41 @@ export class SocketManager {
    * Handle user disconnect
    */
   private handleDisconnect(socket: AuthenticatedSocket, userId: number): void {
+    // Get conversations this socket was in
+    const socketRooms = this.socketConversations.get(socket.id);
+    
+    // Clean up active viewers for each conversation
+    if (socketRooms) {
+      const userSockets = this.userSessions.get(userId);
+      for (const conversationId of socketRooms) {
+        // Check if user has other sockets in this conversation
+        let hasOtherSocketInConversation = false;
+        if (userSockets) {
+          for (const socketId of userSockets) {
+            if (socketId !== socket.id && this.socketConversations.get(socketId)?.has(conversationId)) {
+              hasOtherSocketInConversation = true;
+              break;
+            }
+          }
+        }
+        
+        // Only remove from active viewers if no other socket is viewing
+        if (!hasOtherSocketInConversation) {
+          const viewers = this.activeConversationViewers.get(conversationId);
+          if (viewers) {
+            viewers.delete(userId);
+            if (viewers.size === 0) {
+              this.activeConversationViewers.delete(conversationId);
+            }
+          }
+        }
+      }
+      
+      // Clean up socket conversation tracking
+      this.socketConversations.delete(socket.id);
+    }
+
+    // Clean up user session
     const userSockets = this.userSessions.get(userId);
     if (userSockets) {
       userSockets.delete(socket.id);
@@ -391,24 +491,42 @@ export class SocketManager {
    * Handle typing start
    */
   private handleTypingStart(socket: AuthenticatedSocket, userId: number, data: any): void {
-    const { conversationId } = data;
-    socket.to(`conversation:${conversationId}`).emit('typing:start', {
-      conversationId,
-      userId,
-      isTyping: true,
-    });
+    try {
+      const { conversationId } = data;
+      if (!conversationId || typeof conversationId !== 'number') {
+        return;
+      }
+      
+      // Only emit to others in the room (not to sender)
+      socket.to(`conversation:${conversationId}`).emit('typing:start', {
+        conversationId,
+        userId,
+        isTyping: true,
+      });
+    } catch (error) {
+      console.error('Failed to handle typing start:', error);
+    }
   }
 
   /**
    * Handle typing stop
    */
   private handleTypingStop(socket: AuthenticatedSocket, userId: number, data: any): void {
-    const { conversationId } = data;
-    socket.to(`conversation:${conversationId}`).emit('typing:stop', {
-      conversationId,
-      userId,
-      isTyping: false,
-    });
+    try {
+      const { conversationId } = data;
+      if (!conversationId || typeof conversationId !== 'number') {
+        return;
+      }
+      
+      // Only emit to others in the room (not to sender)
+      socket.to(`conversation:${conversationId}`).emit('typing:stop', {
+        conversationId,
+        userId,
+        isTyping: false,
+      });
+    } catch (error) {
+      console.error('Failed to handle typing stop:', error);
+    }
   }
 
   /**
