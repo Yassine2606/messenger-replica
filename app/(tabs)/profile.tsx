@@ -1,13 +1,11 @@
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useProfile, useLogout } from '@/hooks/useAuth';
-import { useAuth } from '@/contexts/AuthContext';
+import { useProfile, useLogout } from '@/hooks';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { data: user, isLoading } = useProfile();
-  const { logout: authLogout } = useAuth();
   const logoutMutation = useLogout();
 
   const handleLogout = async () => {
@@ -18,7 +16,6 @@ export default function ProfileScreen() {
         onPress: async () => {
           try {
             await logoutMutation.mutateAsync();
-            authLogout(); // Clear auth state
             router.replace('/auth/login' as any);
           } catch (error) {
             Alert.alert('Error', 'Failed to logout. Please try again.');

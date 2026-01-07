@@ -1,14 +1,33 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+
+// Config for retry logic
+interface RetryConfig {
+  maxRetries: number;
+  retryDelay: number;
+  backoffMultiplier: number;
+  retryableStatusCodes: number[];
+  retryableErrorCodes: string[];
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  retryDelay: 1000, // 1 second
+  backoffMultiplier: 2,
+  retryableStatusCodes: [408, 429, 500, 502, 503, 504], // Timeout, rate limit, server errors
+  retryableErrorCodes: ['ECONNABORTED', 'ECONNRESET', 'ENOTFOUND', 'ENETUNREACH', 'ETIMEDOUT'],
+};
 
 class ApiClient {
   private client: AxiosInstance;
   private token: string | null = null;
   private initialized = false;
+  private retryConfig: RetryConfig;
 
   constructor() {
+    this.retryConfig = DEFAULT_RETRY_CONFIG;
     this.client = axios.create({
       baseURL: API_URL,
       timeout: 30000,
@@ -42,7 +61,7 @@ class ApiClient {
   }
 
   /**
-   * Setup request/response interceptors
+   * Setup request/response interceptors with retry logic
    */
   private setupInterceptors(): void {
     this.client.interceptors.request.use(
@@ -50,6 +69,8 @@ class ApiClient {
         if (this.token && !config.headers['Authorization']) {
           config.headers['Authorization'] = `Bearer ${this.token}`;
         }
+        // Initialize retry count
+        (config as any).__retryCount = (config as any).__retryCount || 0;
         return config;
       },
       (error) => Promise.reject(error)
@@ -57,14 +78,81 @@ class ApiClient {
 
     this.client.interceptors.response.use(
       (response) => response,
-      async (error) => {
-        console.error('[ApiClient] Error:', error.config?.method?.toUpperCase(), error.config?.url, 'Status:', error.response?.status);
+      async (error: AxiosError) => {
+        const config = error.config as any;
+        if (!config) return Promise.reject(error);
+
+        // Check if we should retry
+        const shouldRetry =
+          config.__retryCount < this.retryConfig.maxRetries &&
+          (this.isRetryableStatus(error.response?.status) ||
+            this.isRetryableError(error.code));
+
+        if (shouldRetry) {
+          config.__retryCount += 1;
+          const delay = this.calculateBackoffDelay(
+            config.__retryCount,
+            this.retryConfig.retryDelay,
+            this.retryConfig.backoffMultiplier
+          );
+
+          console.warn(
+            `[ApiClient] Retrying ${config.method?.toUpperCase()} ${config.url} ` +
+            `(attempt ${config.__retryCount}/${this.retryConfig.maxRetries}) ` +
+            `after ${delay}ms`,
+            `Status: ${error.response?.status || error.code}`
+          );
+
+          // Wait before retrying
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          return this.client(config);
+        }
+
+        // Log error if not retrying
+        console.error(
+          '[ApiClient] Request failed:',
+          error.config?.method?.toUpperCase(),
+          error.config?.url,
+          'Status:',
+          error.response?.status || error.code
+        );
+
+        // Handle 401 - clear token
         if (error.response?.status === 401 && this.token) {
           await this.clearToken();
         }
+
         return Promise.reject(error);
       }
     );
+  }
+
+  /**
+   * Check if status code is retryable
+   */
+  private isRetryableStatus(status?: number): boolean {
+    return !!status && this.retryConfig.retryableStatusCodes.includes(status);
+  }
+
+  /**
+   * Check if error code is retryable
+   */
+  private isRetryableError(code?: string): boolean {
+    return !!code && this.retryConfig.retryableErrorCodes.includes(code);
+  }
+
+  /**
+   * Calculate exponential backoff delay
+   */
+  private calculateBackoffDelay(
+    retryCount: number,
+    baseDelay: number,
+    multiplier: number
+  ): number {
+    const delay = baseDelay * Math.pow(multiplier, retryCount - 1);
+    // Add jitter to prevent thundering herd
+    const jitter = Math.random() * delay * 0.1;
+    return Math.min(delay + jitter, 60000); // Cap at 60 seconds
   }
 
   /**

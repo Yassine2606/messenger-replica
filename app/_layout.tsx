@@ -5,15 +5,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import { PortalProvider } from '@gorhom/portal';
 import { AuthProvider, SocketProvider } from '@/contexts';
+import { useSocketEventListener } from '@/hooks';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: Infinity, // Data is kept fresh via socket invalidation
       retry: 1,
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: true,
     },
     mutations: {
       retry: 0,
@@ -31,6 +32,13 @@ function RootNavigator() {
   );
 }
 
+function AppContent() {
+  // Set up socket event listeners at root level
+  useSocketEventListener();
+
+  return <RootNavigator />;
+}
+
 export default function Layout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -39,9 +47,9 @@ export default function Layout() {
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
               <SocketProvider>
-                <BottomSheetModalProvider>
-                  <RootNavigator />
-                </BottomSheetModalProvider>
+                <PortalProvider>
+                  <AppContent />
+                </PortalProvider>
               </SocketProvider>
             </AuthProvider>
           </QueryClientProvider>

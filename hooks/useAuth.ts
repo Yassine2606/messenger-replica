@@ -1,68 +1,63 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authService, type LoginData, type RegisterData } from '@/services';
-import { type User, type AuthResponse } from '@/models';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { authService } from '@/services';
+import { useAuthStore } from '@/stores';
 
-const AUTH_QUERY_KEY = ['auth'] as const;
-const PROFILE_QUERY_KEY = ['auth', 'profile'] as const;
-
-export function useLogin() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (data: LoginData): Promise<AuthResponse> => {
-      const response = await authService.login(data);
-      // Cache the user immediately
-      queryClient.setQueryData(PROFILE_QUERY_KEY, response.user);
-      return response;
-    },
-  });
-}
-
+/**
+ * Hook to register a new user
+ */
 export function useRegister() {
+  const { setUser, setToken } = useAuthStore();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: RegisterData): Promise<AuthResponse> => {
-      const response = await authService.register(data);
-      // Cache the user immediately
-      queryClient.setQueryData(PROFILE_QUERY_KEY, response.user);
-      return response;
+    mutationFn: async (data: { email: string; password: string; name: string }) => {
+      return authService.register(data);
+    },
+    onSuccess: (response) => {
+      setUser(response.user);
+      setToken(response.token);
+      // Clear all queries on login
+      queryClient.clear();
     },
   });
 }
 
-export function useProfile() {
-  return useQuery({
-    queryKey: PROFILE_QUERY_KEY,
-    queryFn: () => authService.getProfile(),
-    staleTime: Infinity, // Never consider stale - only refetch on explicit invalidation
-    gcTime: 24 * 60 * 60 * 1000, // Keep in cache for 24 hours
-    retry: false, // Don't retry on auth errors
-    refetchOnMount: false, // Don't refetch on mount
-    refetchOnWindowFocus: false, // Don't refetch on focus
-    refetchOnReconnect: false, // Don't refetch on reconnect
-  });
-}
-
-export function useUpdateProfile() {
+/**
+ * Hook to login user
+ */
+export function useLogin() {
+  const { setUser, setToken } = useAuthStore();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: {
-      name?: string;
-      avatarUrl?: string;
-      status?: string;
-    }): Promise<User> => {
-      return authService.updateProfile(data);
+    mutationFn: async (data: { email: string; password: string }) => {
+      return authService.login(data);
     },
-    onSuccess: (data) => {
-      queryClient.setQueryData(PROFILE_QUERY_KEY, data);
+    onSuccess: (response) => {
+      setUser(response.user);
+      setToken(response.token);
+      // Clear all queries on login
+      queryClient.clear();
     },
   });
 }
 
+/**
+ * Hook to logout user
+ */
 export function useLogout() {
+  const { setUser, setToken } = useAuthStore();
+  const queryClient = useQueryClient();
+
   return useMutation({
-    mutationFn: () => authService.logout(),
+    mutationFn: async () => {
+      await authService.logout();
+    },
+    onSuccess: () => {
+      setUser(null);
+      setToken(null);
+      // Clear all queries on logout
+      queryClient.clear();
+    },
   });
 }

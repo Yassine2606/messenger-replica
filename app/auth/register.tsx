@@ -4,12 +4,10 @@ import { Link, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { Input } from '@/components/ui';
-import { useRegister } from '@/hooks/useAuth';
-import { useAuth } from '@/contexts/AuthContext';
+import { useRegister } from '@/hooks';
 
 export default function RegisterScreen() {
   const insets = useSafeAreaInsets();
-  const { login } = useAuth();
   const registerMutation = useRegister();
 
   const [name, setName] = useState('');
@@ -63,14 +61,12 @@ export default function RegisterScreen() {
     if (!validate()) return;
 
     try {
-      const response = await registerMutation.mutateAsync({
+      await registerMutation.mutateAsync({
         name,
         email,
         password,
       });
-      // Call auth context login to set auth state
-      login(response.token, response.user);
-      // Navigate to tabs
+      // Navigate to tabs (mutation sets auth state)
       router.replace('/(tabs)' as any);
     } catch (error: any) {
       const status = error?.response?.status;

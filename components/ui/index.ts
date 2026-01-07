@@ -1,11 +1,13 @@
 export * from './Input';
 export * from './ConversationItem';
-export * from './MessageItem';
+export * from './MessageBubble';
+export * from './EmojiReactionBar';
 export * from './ChatHeader';
 export * from './MessageStatus';
 export * from './ChatInputFooter';
 export * from './ScrollToBottom';
 export * from './ImageViewer';
 export * from './TypingIndicator';
-export * from './BottomSheet';
-export * from './BottomSheetScrollView';
+export { ErrorBoundary } from './ErrorBoundary';
+export * from './ErrorState';
+export * from './OptimizedImage';

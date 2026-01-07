@@ -1,14 +1,13 @@
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAllUsers } from '@/hooks/useUser';
-import { useCreateOrGetConversation } from '@/hooks/useConversation';
+import { useGetAllUsers, useCreateOrGetConversation } from '@/hooks';
 import { ChatHeader } from '@/components/ui';
 import type { User } from '@/models';
 
 export default function SelectUserScreen() {
   const insets = useSafeAreaInsets();
-  const { data: users = [], isLoading } = useAllUsers();
+  const { data: users = [], isLoading } = useGetAllUsers();
   const createOrGetConversation = useCreateOrGetConversation();
 
   const handleUserPress = async (user: User) => {
@@ -27,6 +26,8 @@ export default function SelectUserScreen() {
       }
     }
   };
+
+  
 
   if (isLoading) {
     return (

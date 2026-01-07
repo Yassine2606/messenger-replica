@@ -268,7 +268,7 @@ export class MessageService {
   /**
    * Delete a message (soft delete)
    */
-  async deleteMessage(messageId: number, userId: number): Promise<void> {
+  async deleteMessage(messageId: number, userId: number): Promise<Message> {
     const message = await Message.findByPk(messageId);
     if (!message) {
       throw new AppError(404, 'Message not found');
@@ -281,6 +281,7 @@ export class MessageService {
     message.isDeleted = true;
     message.deletedAt = new Date();
     await message.save();
+    return message;
   }
 
   /**

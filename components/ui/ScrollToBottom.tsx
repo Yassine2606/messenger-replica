@@ -1,12 +1,11 @@
 import { memo, useEffect } from 'react';
-import { TouchableOpacity, View } from 'react-native';
+import { TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { 
   useSharedValue, 
   useAnimatedStyle, 
   withTiming,
-  Easing
 } from 'react-native-reanimated';
 
 interface ScrollToBottomProps {
@@ -18,50 +17,46 @@ const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 function ScrollToBottomComponent({ visible, onPress }: ScrollToBottomProps) {
   const insets = useSafeAreaInsets();
-  const translateY = useSharedValue(60);
-  const opacity = useSharedValue(0);
+  const combined = useSharedValue(0);
 
   useEffect(() => {
-    if (visible) {
-      opacity.value = withTiming(1, { 
-        duration: 150, // Faster fade in
-        easing: Easing.out(Easing.cubic)
-      });
-      translateY.value = withTiming(0, { 
-        duration: 150, // Faster slide in
-        easing: Easing.out(Easing.cubic)
-      });
-    } else {
-      opacity.value = withTiming(0, { 
-        duration: 100, // Faster fade out
-        easing: Easing.in(Easing.cubic)
-      });
-      translateY.value = withTiming(60, { 
-        duration: 100, // Faster slide out
-        easing: Easing.in(Easing.cubic)
-      });
-    }
-  }, [visible, opacity, translateY]);
+    combined.value = withTiming(visible ? 1 : 0, { duration: 120 });
+  }, [visible]);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{ translateY: translateY.value }],
+    opacity: combined.value,
+    transform: [{ translateY: combined.value === 0 ? 60 : 0 }],
   }));
 
-  // Position button above input area (ChatInputFooter) with safe area consideration
-  const bottomOffset = Math.max(insets.bottom, 16) + 80; // 80px for input area, respect safe area
 
   return (
     <Animated.View
       style={[
         animatedStyle,
-        { pointerEvents: visible ? 'auto' : 'none', bottom: bottomOffset }
-      ]}
-      className="absolute left-0 right-0 items-center">
+        { 
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          alignItems: 'center',
+          pointerEvents: visible ? 'auto' : 'none',
+        }
+      ]}>
       <AnimatedTouchable
         onPress={onPress}
-        style={animatedStyle}
-        className="h-11 w-11 items-center justify-center rounded-full bg-blue-500 shadow-lg active:bg-blue-600"
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: '#3B82F6',
+          justifyContent: 'center',
+          alignItems: 'center',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.2,
+          shadowRadius: 4,
+          elevation: 4,
+        }}
         activeOpacity={0.8}>
         <Ionicons name="arrow-down" size={24} color="white" />
       </AnimatedTouchable>

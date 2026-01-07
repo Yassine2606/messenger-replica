@@ -1,30 +1,40 @@
-import React from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
+import React, { useCallback } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useConversations } from '@/hooks/useConversation';
-import { useProfile } from '@/hooks/useAuth';
-import { ConversationItem } from '@/components/ui';
+import { useGetConversations, useProfile } from '@/hooks';
+import { ConversationItem, ErrorState } from '@/components/ui';
 import type { Conversation } from '@/models';
 
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const { data: user } = useProfile();
-  const { data: conversations = [], isLoading, error } = useConversations();
+  const { data: conversations = [], isLoading, error, refetch } = useGetConversations();
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  console.log('[ChatsScreen] Render:', { 
-    user: user?.name, 
-    conversationsCount: conversations.length, 
-    isLoading,
-    hasError: !!error 
-  });
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Refetch conversations when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
 
   const handleConversationPress = (conversationId: number) => {
     router.push({
       pathname: '/chat/[id]',
       params: { id: conversationId },
-    } as any);
+    });
   };
 
   const renderItem = ({ item }: { item: Conversation }) => (
@@ -37,10 +47,27 @@ export default function ChatsScreen() {
 
   const ItemSeparator = () => <View className="h-px bg-gray-100" />;
 
-  if (isLoading) {
+  if (isLoading && conversations.length === 0) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <ActivityIndicator size="large" color="#3B82F6" />
+      </View>
+    );
+  }
+
+  if (error && conversations.length === 0) {
+    return (
+      <View
+        className="flex-1 bg-white"
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <View className="border-b border-gray-200 px-4 py-4">
+          <Text className="text-2xl font-bold text-gray-900">Chats</Text>
+        </View>
+        <ErrorState
+          error={error as Error}
+          onRetry={() => refetch()}
+          message="Failed to load conversations. Please check your connection."
+        />
       </View>
     );
   }
@@ -62,7 +89,7 @@ export default function ChatsScreen() {
 
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => router.push('/select-user' as any)}
+          onPress={() => router.push('/select-user')}
           className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full bg-blue-500 shadow-lg"
           style={{ marginBottom: insets.bottom }}>
           <Ionicons name="create-outline" size={28} color="white" />
@@ -79,16 +106,34 @@ export default function ChatsScreen() {
         <Text className="text-2xl font-bold text-gray-900">Chats</Text>
       </View>
 
-      <FlatList
+      {error && (
+        <View className="mx-4 my-2">
+          <ErrorState
+            error={error as Error}
+            onRetry={() => refetch()}
+            compact
+            message="Error loading conversations"
+          />
+        </View>
+      )}
+
+      <FlashList
         data={conversations}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ItemSeparatorComponent={ItemSeparator}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3B82F6"
+          />
+        }
       />
 
       <TouchableOpacity
         activeOpacity={0.8}
-        onPress={() => router.push('/select-user' as any)}
+        onPress={() => router.push('/select-user')}
         className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full bg-blue-500 shadow-lg"
         style={{ marginBottom: insets.bottom }}>
         <Ionicons name="create-outline" size={28} color="white" />

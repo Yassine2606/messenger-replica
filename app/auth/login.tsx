@@ -4,12 +4,10 @@ import { Link, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { Input } from '@/components/ui';
-import { useLogin } from '@/hooks/useAuth';
-import { useAuth } from '@/contexts/AuthContext';
+import { useLogin } from '@/hooks';
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { login } = useAuth();
   const loginMutation = useLogin();
 
   const [email, setEmail] = useState('');
@@ -39,10 +37,8 @@ export default function LoginScreen() {
     if (!validate()) return;
 
     try {
-      const response = await loginMutation.mutateAsync({ email, password });
-      // Call auth context login to set auth state
-      login(response.token, response.user);
-      // Navigate to tabs
+      await loginMutation.mutateAsync({ email, password });
+      // Navigate to tabs (mutation sets auth state)
       router.replace('/(tabs)' as any);
     } catch (error: any) {
       const status = error?.response?.status;

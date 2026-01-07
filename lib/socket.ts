@@ -10,28 +10,26 @@ import type {
 
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://localhost:3000';
 
-class SocketClient {
+/**
+ * Manages socket connection lifecycle only
+ * Responsibility: connect, disconnect, connection state
+ */
+class SocketConnection {
   private socket: Socket | null = null;
   private token: string | null = null;
-  private listeners: Map<string, Set<Function>> = new Map();
-  private eventListeners: Map<string, Set<Function>> = new Map();
 
-  /**
-   * Connect to socket server
-   */
-  connect(token: string): void {
+  connect(token: string, onSetup: (socket: Socket) => void): void {
     if (this.socket?.connected) {
       return;
     }
 
     if (this.socket && !this.socket.connected) {
-      // Reconnect existing socket
+      this.socket.auth = { token };
       this.socket.connect();
       return;
     }
 
     this.token = token;
-
     this.socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket', 'polling'],
@@ -41,164 +39,40 @@ class SocketClient {
       reconnectionDelayMax: 5000,
     });
 
-    this.setupEventHandlers();
+    onSetup(this.socket);
   }
 
-  /**
-   * Disconnect from socket server
-   */
   disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
       this.token = null;
-      this.listeners.clear();
-      this.eventListeners.clear();
     }
   }
 
-  /**
-   * Check if socket is connected
-   */
   isConnected(): boolean {
     return this.socket?.connected || false;
   }
 
-  /**
-   * Setup internal event handlers
-   */
-  private setupEventHandlers(): void {
-    if (!this.socket) return;
-
-    this.socket.on('connect', () => {
-      this.emitEvent('connected');
-    });
-
-    this.socket.on('disconnect', (reason) => {
-      this.emitEvent('disconnected', reason);
-    });
-
-    this.socket.on('connect_error', (error) => {
-      console.error('[Socket] Connection error:', error);
-      this.emitEvent('error', error);
-    });
-
-    this.socket.on('error', (payload: SocketErrorPayload) => {
-      console.error('[Socket] Server error:', payload);
-      this.emitEvent('server_error', payload);
-    });
-
-    // Register message event listeners
-    this.socket.on('message:new', (payload: SocketMessagePayload) => {
-      this.emitEvent('message:new', payload);
-    });
-
-    this.socket.on('message:status', (payload: SocketMessageStatusPayload) => {
-      this.emitEvent('message:status', payload);
-    });
-
-    this.socket.on('conversation:updated', (payload: SocketConversationUpdatePayload) => {
-      this.emitEvent('conversation:updated', payload);
-    });
-
-    this.socket.on('user:status', (payload: SocketUserStatusPayload) => {
-      this.emitEvent('user:status', payload);
-    });
-
-    this.socket.on('typing:start', (payload: SocketTypingPayload) => {
-      this.emitEvent('typing:start', payload);
-    });
-
-    this.socket.on('typing:stop', (payload: SocketTypingPayload) => {
-      this.emitEvent('typing:stop', payload);
-    });
+  getSocket(): Socket | null {
+    return this.socket;
   }
+}
 
-  /**
-   * Emit internal event
-   */
-  private emitEvent(event: string, data?: any): void {
-    const handlers = this.eventListeners.get(event);
-    if (handlers) {
-      handlers.forEach((handler) => handler(data));
-    }
-  }
+/**
+ * Manages socket event subscriptions
+ * Responsibility: subscribe/unsubscribe, emit events
+ */
+class SocketEventManager {
+  private eventListeners: Map<string, Set<Function>> = new Map();
 
-  /**
-   * Join conversation room
-   */
-  joinConversation(conversationId: number): void {
-    this.socket?.emit('conversation:join', { conversationId });
-  }
-
-  /**
-   * Leave conversation room
-   */
-  leaveConversation(conversationId: number): void {
-    this.socket?.emit('conversation:leave', { conversationId });
-  }
-
-  /**
-   * Send message
-   */
-  sendMessage(data: {
-    conversationId: number;
-    type: string;
-    content?: string;
-    mediaUrl?: string;
-    mediaMimeType?: string;
-    mediaDuration?: number;
-    replyToId?: number;
-  }): void {
-    this.socket?.emit('message:send', data);
-  }
-
-  /**
-   * Mark message(s) as read
-   */
-  markAsRead(data: { conversationId: number; messageId?: number; messageIds?: number[] }): void {
-    this.socket?.emit('message:read', data);
-  }
-
-  /**
-   * Emit message delivered event
-   */
-  emitMessageDelivered(messageId: number): void {
-    this.socket?.emit('message:delivered', { messageId });
-  }
-
-  /**
-   * Emit conversation read event
-   */
-  emitConversationRead(conversationId: number): void {
-    this.socket?.emit('conversation:read', { conversationId });
-  }
-
-  /**
-   * Start typing indicator
-   */
-  startTyping(conversationId: number): void {
-    this.socket?.emit('typing:start', { conversationId });
-  }
-
-  /**
-   * Stop typing indicator
-   */
-  stopTyping(conversationId: number): void {
-    this.socket?.emit('typing:stop', { conversationId });
-  }
-
-  /**
-   * Subscribe to event with cleanup function
-   */
   subscribe<T = any>(event: string, handler: (data: T) => void): () => void {
     if (!this.eventListeners.has(event)) {
       this.eventListeners.set(event, new Set());
     }
-    
+
     this.eventListeners.get(event)!.add(handler as Function);
 
-    // Return cleanup function
     return () => {
       const handlers = this.eventListeners.get(event);
       if (handlers) {
@@ -207,48 +81,181 @@ class SocketClient {
     };
   }
 
+  emit(event: string, data?: any): void {
+    const handlers = this.eventListeners.get(event);
+    if (handlers) {
+      handlers.forEach((handler) => handler(data));
+    }
+  }
+
+  clear(): void {
+    this.eventListeners.clear();
+  }
+}
+
+/**
+ * Main socket client combining connection and event management
+ */
+class SocketClient {
+  private connection: SocketConnection;
+  private eventManager: SocketEventManager;
+  private pendingActions: Array<() => void> = [];
+
+  constructor() {
+    this.connection = new SocketConnection();
+    this.eventManager = new SocketEventManager();
+  }
+
+  connect(token: string): void {
+    this.connection.connect(token, (socket) => {
+      this.setupEventHandlers(socket);
+      // Flush pending actions after socket is set up
+      this.flushPendingActions();
+    });
+  }
+
+  disconnect(): void {
+    this.connection.disconnect();
+    this.eventManager.clear();
+    this.pendingActions = [];
+  }
+
+  isConnected(): boolean {
+    return this.connection.isConnected();
+  }
+
   /**
-   * Listen to new messages
+   * Queue action if socket not ready, otherwise execute immediately
    */
+  private queueOrExecute(action: () => void): void {
+    if (this.isConnected()) {
+      action();
+    } else {
+      this.pendingActions.push(action);
+    }
+  }
+
+  /**
+   * Flush all pending actions once socket is ready
+   */
+  private flushPendingActions(): void {
+    while (this.pendingActions.length > 0) {
+      const action = this.pendingActions.shift();
+      if (action) {
+        action();
+      }
+    }
+  }
+
+  /**
+   * Setup socket event listeners (internal)
+   */
+  private setupEventHandlers(socket: Socket): void {
+    socket.on('connect', () => {
+      this.eventManager.emit('connected');
+    });
+
+    socket.on('disconnect', (reason) => {
+      this.eventManager.emit('disconnected', reason);
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('[Socket] Connection error:', error);
+      this.eventManager.emit('error', error);
+    });
+
+    socket.on('error', (payload: SocketErrorPayload) => {
+      console.error('[Socket] Server error:', payload);
+      this.eventManager.emit('server_error', payload);
+    });
+
+    socket.on('message:new', (payload: SocketMessagePayload) => {
+      this.eventManager.emit('message:new', payload);
+    });
+
+    socket.on('message:status', (payload: SocketMessageStatusPayload) => {
+      this.eventManager.emit('message:status', payload);
+    });
+
+    socket.on('message:deleted', (payload: { messageId: number; conversationId: number; deletedAt: string }) => {
+      this.eventManager.emit('message:deleted', payload);
+    });
+
+    socket.on('conversation:updated', (payload: SocketConversationUpdatePayload) => {
+      this.eventManager.emit('conversation:updated', payload);
+    });
+
+    socket.on('user:status', (payload: SocketUserStatusPayload) => {
+      this.eventManager.emit('user:status', payload);
+    });
+
+    socket.on('typing:start', (payload: SocketTypingPayload) => {
+      this.eventManager.emit('typing:start', payload);
+    });
+
+    socket.on('typing:stop', (payload: SocketTypingPayload) => {
+      this.eventManager.emit('typing:stop', payload);
+    });
+  }
+
+  // Socket action methods
+  joinConversation(conversationId: number): void {
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('conversation:join', { conversationId });
+    });
+  }
+
+  leaveConversation(conversationId: number): void {
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('conversation:leave', { conversationId });
+    });
+  }
+
+  startTyping(conversationId: number): void {
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('typing:start', { conversationId });
+    });
+  }
+
+  stopTyping(conversationId: number): void {
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('typing:stop', { conversationId });
+    });
+  }
+
+  // Event subscription methods
+  subscribe<T = any>(event: string, handler: (data: T) => void): () => void {
+    return this.eventManager.subscribe(event, handler);
+  }
+
   onMessageNew(handler: (payload: SocketMessagePayload) => void): () => void {
     return this.subscribe('message:new', handler);
   }
 
-  /**
-   * Listen to message status updates
-   */
   onMessageStatus(handler: (payload: SocketMessageStatusPayload) => void): () => void {
     return this.subscribe('message:status', handler);
   }
 
-  /**
-   * Listen to conversation updates
-   */
+  onMessageDeleted(handler: (payload: { messageId: number; conversationId: number; deletedAt: string }) => void): () => void {
+    return this.subscribe('message:deleted', handler);
+  }
+
   onConversationUpdated(handler: (payload: SocketConversationUpdatePayload) => void): () => void {
     return this.subscribe('conversation:updated', handler);
   }
 
-  /**
-   * Listen to user status changes
-   */
   onUserStatus(handler: (payload: SocketUserStatusPayload) => void): () => void {
     return this.subscribe('user:status', handler);
   }
 
-  /**
-   * Listen to typing start
-   */
   onTypingStart(handler: (payload: SocketTypingPayload) => void): () => void {
     return this.subscribe('typing:start', handler);
   }
 
-  /**
-   * Listen to typing stop
-   */
   onTypingStop(handler: (payload: SocketTypingPayload) => void): () => void {
     return this.subscribe('typing:stop', handler);
   }
 }
 
 export const socketClient = new SocketClient();
-export const socketManager = socketClient; // Alias for backwards compatibility
+export const socketManager = socketClient;

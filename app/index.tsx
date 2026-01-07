@@ -1,13 +1,14 @@
-import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { Redirect } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuthStore } from '@/stores';
+import { useAuth } from '@/contexts';
 
 export default function Index() {
-  const { isAuthenticated, isInitialized } = useAuth();
+  const token = useAuthStore((state) => state.token);
+  const { isHydrated } = useAuth();
 
-  // Show loading while initializing
-  if (!isInitialized) {
+  // Show loading while hydrating auth from storage
+  if (!isHydrated) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator size="large" color="#3B82F6" />
@@ -16,7 +17,7 @@ export default function Index() {
   }
 
   // Route based on auth state
-  if (isAuthenticated) {
+  if (token) {
     return <Redirect href="/(tabs)" />;
   }
 

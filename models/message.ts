@@ -10,7 +10,7 @@ export enum MessageType {
 }
 
 /**
- * Read Status
+ * Read Status (sent is for frontend optimistic updates only)
  */
 export enum ReadStatus {
   SENT = 'sent',
