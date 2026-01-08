@@ -1,5 +1,6 @@
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
 export interface UploadResult {
   success: boolean;
@@ -15,7 +16,7 @@ export type FileType = 'image' | 'audio';
 
 export class UploadService {
   /**
-   * Upload a file (image or audio) using fetch API
+   * Upload a file (image or audio) using fetch API with proper multipart/form-data
    */
   async uploadFile(uri: string, fileType: FileType): Promise<UploadResult> {
     try {
@@ -42,47 +43,51 @@ export class UploadService {
       // Get file info from filesystem using legacy API
       const FileSystem = FileSystemLegacy as any;
       const fileInfo = await FileSystem.getInfoAsync(uri);
-      console.log('File info:', { uri, exists: fileInfo.exists, size: fileInfo.size });
       
       if (!fileInfo.exists) {
         throw new Error(`File not found: ${uri}`);
       }
       
-      // Read file as base64
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      
-      // Create FormData with blob
-      const formData = new FormData();
-      
-      // Create a Blob from base64 data
-      const blob = await fetch(`data:${mimeType};base64,${base64Data}`).then((res) =>
-        res.blob()
-      );
-      
-      formData.append('file', blob, filename);
-      formData.append('fileType', fileType);
-      
       // Get auth token
       const token = await AsyncStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('No auth token found');
+      }
       
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+      const uploadUrl = `${apiUrl}/upload`;
       
-      console.log('Uploading file via fetch:', { filename, mimeType, fileType, size: fileInfo.size });
+      // Create FormData manually for React Native compatibility
+      const formData = new FormData();
+      formData.append('file', {
+        uri: uri,
+        type: mimeType,
+        name: filename,
+      } as any);
+      formData.append('fileType', fileType);
       
-      const response = await fetch(`${apiUrl}/upload`, {
+      // Fetch with timeout (30 seconds for large file uploads)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      // Use URI-based FormData for both iOS and Android
+      // React Native's FormData handles file:// URIs natively
+      console.log('Upload using URI-based FormData, mimeType:', mimeType);
+      const requestBody = formData;
+      
+      
+      const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          'Authorization': `Bearer ${token}`,
         },
-        body: formData,
+        body: requestBody,
+        signal: controller.signal,
       });
       
-      console.log('Upload response status:', response.status, response.statusText);
-      
+      clearTimeout(timeoutId);
       const responseText = await response.text();
-      console.log('Upload response body:', responseText);
+      console.log('Upload response:', response.status, responseText);
       
       if (!response.ok) {
         let errorData;
@@ -95,11 +100,13 @@ export class UploadService {
       }
       
       const result = JSON.parse(responseText);
-      console.log('Upload result:', result);
+      console.log('Upload successful, file URL:', result.file?.url);
       return result;
     } catch (error: any) {
       console.error('Upload service error:', {
         message: error.message,
+        code: error.code,
+        name: error.name,
         stack: error.stack,
       });
       throw new Error(error.message || 'Upload failed');

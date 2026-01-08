@@ -14,6 +14,13 @@ const CONVERSATION_QUERY_KEYS = {
   detail: (conversationId: number) => [...CONVERSATION_QUERY_KEYS.all, conversationId] as const,
 };
 
+// Global reference for socket activity tracking (shared across all hook instances)
+let lastActivityTime = Date.now();
+
+const resetActivityTimer = () => {
+  lastActivityTime = Date.now();
+};
+
 /**
  * Hook to listen to socket events and invalidate/update queries accordingly
  * This hook should be used at the top level (layout or root screen)
@@ -25,6 +32,7 @@ export function useSocketEventListener() {
   useEffect(() => {
     // Message received - invalidate messages query for that conversation AND conversation list
     const unsubscribeMessageNew = socketClient.onMessageNew((payload: SocketMessagePayload) => {
+      resetActivityTimer();
       const { conversationId } = payload;
       // Invalidate messages for the conversation with refetch
       queryClient.invalidateQueries({
@@ -40,6 +48,7 @@ export function useSocketEventListener() {
 
     // Message status update - invalidate messages query and refetch
     const unsubscribeMessageStatus = socketClient.onMessageStatus((payload: SocketMessageStatusPayload) => {
+      resetActivityTimer();
       const { conversationId } = payload;
       queryClient.invalidateQueries({
         queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
@@ -49,6 +58,7 @@ export function useSocketEventListener() {
 
     // Message deleted - invalidate messages query
     const unsubscribeMessageDeleted = socketClient.subscribe('message:deleted', (payload: any) => {
+      resetActivityTimer();
       const { conversationId } = payload;
       queryClient.invalidateQueries({
         queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
@@ -58,6 +68,7 @@ export function useSocketEventListener() {
 
     // Conversation updated - invalidate conversations queries
     const unsubscribeConversationUpdated = socketClient.onConversationUpdated((payload) => {
+      resetActivityTimer();
       queryClient.invalidateQueries({
         queryKey: CONVERSATION_QUERY_KEYS.all,
         refetchType: 'all',
@@ -79,15 +90,38 @@ export function useSocketEventListener() {
 
     // Typing start - track user typing
     const unsubscribeTypingStart = socketClient.onTypingStart((payload: SocketTypingPayload) => {
+      resetActivityTimer();
       addTypingUser(payload.userId);
     });
 
     // Typing stop - untrack user typing
     const unsubscribeTypingStop = socketClient.onTypingStop((payload: SocketTypingPayload) => {
+      resetActivityTimer();
       removeTypingUser(payload.userId);
     });
 
+    // Socket activity timeout detection - refetch all data if no activity for 60 seconds
+    const activityTimeoutInterval = setInterval(() => {
+      const timeSinceLastActivity = Date.now() - lastActivityTime;
+      const INACTIVITY_THRESHOLD = 60000; // 60 seconds
+
+      if (timeSinceLastActivity > INACTIVITY_THRESHOLD) {
+        // Force refresh all message and conversation queries
+        queryClient.invalidateQueries({
+          queryKey: MESSAGE_QUERY_KEYS.all,
+          refetchType: 'all',
+        });
+        queryClient.invalidateQueries({
+          queryKey: CONVERSATION_QUERY_KEYS.all,
+          refetchType: 'all',
+        });
+        // Reset timer after refresh
+        lastActivityTime = Date.now();
+      }
+    }, 30000); // Check every 30 seconds
+
     return () => {
+      clearInterval(activityTimeoutInterval);
       unsubscribeMessageNew();
       unsubscribeMessageStatus();
       unsubscribeMessageDeleted();

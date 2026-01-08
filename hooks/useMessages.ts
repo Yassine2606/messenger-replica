@@ -89,13 +89,10 @@ export function useSendMessage(conversationId: number) {
 
   return useMutation({
     mutationFn: async (input: SendMessageInput) => {
-      console.log('Sending message:', input);
       const message = await messageService.sendMessage(input);
-      console.log('Message sent successfully:', message);
       return message;
     },
     onMutate: async (input) => {
-      console.log('onMutate: Creating optimistic message for:', input);
       // Cancel any outgoing refetches
       await queryClient.cancelQueries({
         queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
@@ -132,7 +129,6 @@ export function useSendMessage(conversationId: number) {
       };
 
       // Add to store (which will assign unique negative ID)
-      console.log('Adding optimistic message to store:', tempId, optimisticMessage);
       addOptimisticMessage(tempId, optimisticMessage, conversationId);
 
       // Get the actual optimistic message with correct ID from store
@@ -145,7 +141,6 @@ export function useSendMessage(conversationId: number) {
       return { tempId, optimisticMessage: actualOptimisticMessage };
     },
     onSuccess: (message, input, context) => {
-      console.log('onSuccess: Message confirmed:', message, 'context:', context);
       if (context) {
         // Confirm optimistic message - remove from store and add actual message to cache
         confirmOptimisticMessage(context.tempId, message);
@@ -205,9 +200,15 @@ export function useDeleteMessage(conversationId: number) {
       await messageService.deleteMessage(messageId);
     },
     onSuccess: (_, messageId) => {
-      // Update cache
-      queryClient.setQueryData(MESSAGE_QUERY_KEYS.byConversation(conversationId), (old: Message[] | undefined) => {
-        return old?.map((m) => (m.id === messageId ? { ...m, isDeleted: true } : m));
+      // Update cache for infinite query (which uses pages structure)
+      queryClient.setQueryData(MESSAGE_QUERY_KEYS.byConversation(conversationId), (old: any) => {
+        if (!old || !old.pages) return old;
+        
+        const newPages = old.pages.map((page: Message[]) =>
+          page.map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m))
+        );
+        
+        return { ...old, pages: newPages };
       });
     },
   });

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, ReactNode } from 'react';
 import { useAuthStore } from '@/stores';
-import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiClient } from '@/services';
 
 interface AuthContextType {
   isHydrated: boolean;
@@ -19,9 +20,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     const loadToken = async () => {
       try {
-        const stored = await SecureStore.getItemAsync('authToken');
+        const stored = await AsyncStorage.getItem('auth_token');
         if (stored) {
           setToken(stored);
+          apiClient.setToken(stored);
         }
       } catch (error) {
         console.error('[Auth] Failed to load token:', error);
@@ -33,14 +35,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loadToken();
   }, [setToken]);
 
-  // Save token to secure storage when it changes
+  // Save token to AsyncStorage and sync ApiClient when it changes
   useEffect(() => {
     const saveToken = async () => {
       try {
         if (token) {
-          await SecureStore.setItemAsync('authToken', token);
+          await AsyncStorage.setItem('auth_token', token);
+          apiClient.setToken(token);
         } else {
-          await SecureStore.deleteItemAsync('authToken');
+          await AsyncStorage.removeItem('auth_token');
+          apiClient.clearToken();
         }
       } catch (error) {
         console.error('[Auth] Failed to save token:', error);

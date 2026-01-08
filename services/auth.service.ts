@@ -19,7 +19,7 @@ export class AuthService {
   async register(data: RegisterData): Promise<AuthResponse> {
     const response = await apiClient.post<AuthResponse>('/auth/register', data);
     if (response.token) {
-      await apiClient.setToken(response.token);
+      apiClient.setToken(response.token);
     }
     return response;
   }
@@ -30,7 +30,7 @@ export class AuthService {
   async login(data: LoginData): Promise<AuthResponse> {
     const response = await apiClient.post<AuthResponse>('/auth/login', data);
     if (response.token) {
-      await apiClient.setToken(response.token);
+      apiClient.setToken(response.token);
     }
     return response;
   }
@@ -57,7 +57,7 @@ export class AuthService {
    * Logout user
    */
   async logout(): Promise<void> {
-    await apiClient.clearToken();
+    apiClient.clearToken();
   }
 }
 

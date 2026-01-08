@@ -7,14 +7,13 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   SharedValue,
-  interpolateColor,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
 import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
 import { ReplyIndicator } from './ReplyIndicator';
-import { AudioWavePlayer } from './AudioWavePlayer';
 import { scheduleOnRN } from 'react-native-worklets';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '');
@@ -26,6 +25,7 @@ interface MessageBubbleProps {
   nextMessage?: Message;
   onReply?: (message: Message) => void;
   onShowMenu?: (coordinates: BubbleCoordinates | null) => void;
+  onContextMenu?: (message: Message) => void;
   onImagePress?: (imageUri: string) => void;
   onScrollToReply?: (message: Message) => void;
   // Shared animated values for synchronized timestamp drag across all messages of one side
@@ -126,6 +126,7 @@ function MessageBubbleComponent({
   nextMessage,
   onReply,
   onShowMenu,
+  onContextMenu,
   onImagePress,
   onScrollToReply,
   sharedRowTranslateX: propsSharedRowTranslateX,
@@ -204,26 +205,31 @@ function MessageBubbleComponent({
       }
       bubbleTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
       replyIconOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
-    })
-    .simultaneousWithExternalGesture(Gesture.LongPress());
-
-  // Long press handler: measure bubble and notify parent
-  const handleLongPress = useCallback(() => {
-    if (message.isDeleted) return;
-
-    bubbleRef.current?.measure((x, y, width, height, pageX, pageY) => {
-      // Trigger haptics
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-
-      // Emit coordinates to parent for overlay positioning
-      onShowMenu?.({
-        pageX,
-        pageY,
-        width,
-        height,
-      });
     });
-  }, [message.isDeleted, message.id, onShowMenu]);
+
+  // Handler for long press callback
+  const triggerLongPress = useCallback(() => {
+    // Trigger haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {
+      // Silently fail on unsupported platforms
+    });
+
+    // Open context menu
+    if (onContextMenu) {
+      onContextMenu(message);
+    }
+  }, [message, onContextMenu]);
+
+  // GESTURE 3: Long press gesture for context menu (simultaneous with swipe)
+  const longPressGesture = Gesture.LongPress()
+    .enabled(!message.isDeleted)
+    .minDuration(300)
+    .onStart(() => {
+      runOnJS(triggerLongPress)();
+    });
+
+  // Combine gestures: long press and swipe should work together
+  const combinedBubbleGesture = Gesture.Simultaneous(longPressGesture, bubbleGesture);
 
   // Row-level animated style (for timestamp reveal)
   const rowAnimatedStyle = useAnimatedStyle(() => ({
@@ -253,6 +259,11 @@ function MessageBubbleComponent({
     );
   }
 
+  // Don't render bubble for audio messages - they're rendered separately in the chat screen
+  if (message.type === 'audio') {
+    return null;
+  }
+
   return (
     <View style={{ marginBottom: 4 }}>
       {/* Row-level gesture detector - wraps the entire row */}
@@ -276,33 +287,28 @@ function MessageBubbleComponent({
             <Ionicons name="arrow-undo" size={20} color="#9CA3AF" />
           </Animated.View>
 
-          {/* Message bubble with long press for actions and swipe for reply */}
-          <Pressable
-            ref={bubbleRef}
-            onLongPress={handleLongPress}
-            delayLongPress={300}
-            disabled={message.isDeleted}>
-            <GestureDetector gesture={bubbleGesture}>
-              <Animated.View style={bubbleAnimatedStyle}>
-                <ReplyIndicator message={message} isOwn={isOwn} onPress={() => onScrollToReply?.(message)} />
-                {message.type === 'image' && message.mediaUrl ? (
-                  <Animated.View className="max-w-[280px] overflow-hidden rounded-2xl">
-                    <Pressable onPress={() => onImagePress?.(message.mediaUrl!)}>
-                      <Image
-                        source={{ uri: `${API_BASE_URL}${message.mediaUrl}` }}
-                        style={{ width: 200, height: 200, borderRadius: 12 }}
-                        contentFit="cover"
-                      />
-                    </Pressable>
-                    {message.content && (
-                      <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
-                        <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
-                          {message.content}
-                        </Text>
-                      </View>
-                    )}
-                  </Animated.View>
-                ) : (
+          {/* Message bubble with gestures for reply and long press for context menu */}
+          <GestureDetector gesture={combinedBubbleGesture}>
+            <Animated.View style={bubbleAnimatedStyle}>
+              <ReplyIndicator message={message} isOwn={isOwn} onPress={() => onScrollToReply?.(message)} />
+              {message.type === 'image' && message.mediaUrl ? (
+                <Animated.View className="max-w-[280px] overflow-hidden rounded-2xl">
+                  <Pressable onPress={() => onImagePress?.(message.mediaUrl!)}>
+                    <Image
+                      source={{ uri: message.mediaUrl.startsWith('http') ? message.mediaUrl : `${API_BASE_URL}${message.mediaUrl}` }}
+                      style={{ width: 200, height: 200, borderRadius: 12 }}
+                      contentFit="cover"
+                    />
+                  </Pressable>
+                  {message.content && (
+                    <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
+                      <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                        {message.content}
+                      </Text>
+                    </View>
+                  )}
+                </Animated.View>
+              ) : (
                   <View
                     className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
                     style={borderRadiusStyle}>
@@ -311,21 +317,10 @@ function MessageBubbleComponent({
                         {message.content}
                       </Text>
                     )}
-
-                    {message.type === 'audio' && message.mediaUrl && (
-                      <View className="max-w-[320px]">
-                        <AudioWavePlayer
-                          audioUrl={`${API_BASE_URL}${message.mediaUrl}`}
-                          waveform={message.waveform || []}
-                          duration={message.mediaDuration || 0}
-                        />
-                      </View>
-                    )}
                   </View>
                 )}
               </Animated.View>
             </GestureDetector>
-          </Pressable>
 
           {/* Timestamp - revealed on right when row is dragged left */}
           <Animated.View

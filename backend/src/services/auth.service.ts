@@ -84,14 +84,23 @@ export class AuthService {
 
   public verifyToken(token: string): { userId: number } {
     try {
-      const decoded = jwt.verify(token, config.jwt.secret) as { userId: number };
-      return decoded;
+      if (!config.jwt.secret) {
+        throw new Error('JWT secret is not defined');
+      }
+      const decoded = jwt.verify(token, config.jwt.secret) as jwt.JwtPayload;
+      if (!decoded || typeof decoded !== 'object' || !decoded.userId) {
+        throw new AppError(401, 'Invalid or expired token');
+      }
+      return { userId: decoded.userId };
     } catch {
       throw new AppError(401, 'Invalid or expired token');
     }
   }
 
   private generateToken(userId: number): string {
+    if (!config.jwt.secret) {
+      throw new Error('JWT secret is not defined');
+    }
     return jwt.sign({ userId }, config.jwt.secret, {
       expiresIn: config.jwt.expiresIn,
     } as jwt.SignOptions);

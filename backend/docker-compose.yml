@@ -19,17 +19,8 @@ services:
   backend:
     build: .
     container_name: messenger_backend
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: messenger_db
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      JWT_SECRET: production-secret-key-change-this
-      JWT_EXPIRES_IN: 7d
-      CORS_ORIGIN: http://localhost:8081
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     volumes:

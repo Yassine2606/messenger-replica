@@ -14,3 +14,4 @@ export * from './ReplyIndicator';
 export * from './TimeSeparator';
 export * from './AudioWavePlayer';
 export * from './AudioRecordingControls';
+export * from './MessageContextMenuModal';

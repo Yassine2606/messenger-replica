@@ -1,9 +1,7 @@
 node_modules
 dist
 npm-debug.log
-.env
 .git
 .gitignore
 README.md
-*.log
 .DS_Store

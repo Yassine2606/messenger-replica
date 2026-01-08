@@ -1,5 +1,4 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 
@@ -40,24 +39,13 @@ class ApiClient {
   }
 
   /**
-   * Initialize client - load token from storage
+   * Initialize client - token will be set via setToken() after auth
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
       return;
     }
-
-    try {
-      const storedToken = await AsyncStorage.getItem('auth_token');
-      if (storedToken) {
-        this.token = storedToken;
-        this.client.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
-      }
-      this.initialized = true;
-    } catch (error) {
-      console.error('[ApiClient] Error loading auth token:', error);
-      this.initialized = true;
-    }
+    this.initialized = true;
   }
 
   /**
@@ -156,16 +144,11 @@ class ApiClient {
   }
 
   /**
-   * Set authentication token
+   * Set authentication token (called by AuthProvider/AuthService)
    */
-  async setToken(token: string): Promise<void> {
+  setToken(token: string): void {
     this.token = token;
     this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    try {
-      await AsyncStorage.setItem('auth_token', token);
-    } catch (error) {
-      console.error('Error saving auth token:', error);
-    }
   }
 
   /**
@@ -188,14 +171,9 @@ class ApiClient {
   /**
    * Clear authentication token
    */
-  async clearToken(): Promise<void> {
+  clearToken(): void {
     this.token = null;
     delete this.client.defaults.headers.common['Authorization'];
-    try {
-      await AsyncStorage.removeItem('auth_token');
-    } catch (error) {
-      console.error('Error clearing auth token:', error);
-    }
   }
 
   /**

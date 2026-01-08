@@ -29,7 +29,8 @@ class FileStorage {
     fileType: FileType
   ): { valid: boolean; error?: string } {
     const imageMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    const audioMimeTypes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/m4a'];
+    // Accept both audio/m4a and audio/x-m4a (iOS variant)
+    const audioMimeTypes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/m4a', 'audio/x-m4a', 'audio/mp4'];
     const imageSizeLimit = 10 * 1024 * 1024; // 10MB
     const audioSizeLimit = 50 * 1024 * 1024; // 50MB
 

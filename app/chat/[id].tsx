@@ -4,12 +4,12 @@ import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSharedValue, useAnimatedStyle, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
-import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, AudioWavePlayer } from '@/components/ui';
-import { useInfiniteMessages, useSendMessage, useProfile, useGetConversation, useUploadImage, useUploadAudio, useAudioRecording } from '@/hooks';
+import * as Haptics from 'expo-haptics';
+import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, AudioWavePlayer, MessageContextMenuModal } from '@/components/ui';
+import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
 import { socketClient } from '@/lib/socket';
 import { SPACING, MESSAGE } from '@/lib';
-import { pickImageFromLibrary, takePhotoWithCamera } from '@/lib/image-picker';
 import { Message, MessageType } from '@/models';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -17,6 +17,38 @@ export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const conversationId = parseInt(id || '0', 10);
   const inputRef = useRef<TextInput>(null);
+
+  // ============== Context Menu ==============
+  const [activeContextMessage, setActiveContextMessage] = useState<Message | null>(null);
+  const deleteMessageMutation = useDeleteMessage(conversationId);
+
+  const handleMessageContextMenu = useCallback((message: Message) => {
+    setActiveContextMessage(message);
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setActiveContextMessage(null);
+  }, []);
+
+  const handleDeleteMessage = useCallback(async () => {
+    if (!activeContextMessage) return;
+
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      // Silently fail on unsupported platforms
+    }
+
+    deleteMessageMutation.mutate(activeContextMessage.id, {
+      onSuccess: () => {
+        closeContextMenu();
+      },
+      onError: (error) => {
+        console.error('Failed to delete message:', error);
+        Alert.alert('Error', 'Failed to delete message. Please try again.');
+      },
+    });
+  }, [activeContextMessage, deleteMessageMutation, closeContextMenu]);
 
   // ============== Data ==============
   const { data: user } = useProfile();
@@ -35,79 +67,77 @@ export default function ChatScreen() {
     return data.pages.flatMap((page: Message[]) => page);
   }, [data]);
   
-  const sendMutation = useSendMessage(conversationId);
-  const uploadImageMutation = useUploadImage();
-  const uploadAudioMutation = useUploadAudio();
-  
-  // Audio recording
-  const {
-    isRecording,
-    duration: recordingDuration,
-    currentWaveform,
-    error: recordingError,
-    startRecording,
-    stopRecording,
-    cancelRecording,
-  } = useAudioRecording();
-
   // ============== Socket/Room ==============
   useEffect(() => {
     socketClient.joinConversation(conversationId);
     return () => {
       socketClient.leaveConversation(conversationId);
-      // Cleanup typing timeout on unmount
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
     };
   }, [conversationId]);
 
   // ============== Input State ==============
   const [messageText, setMessageText] = useState('');
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
-  const [isTyping, setIsTyping] = useState(false);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUri, setImageViewerUri] = useState('');
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isUserTyping } = useUserStore();
   const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
 
+  // ============== Typing Indicator Hook ==============
+  const { handleTextChange: handleTypingIndicator } = useTypingIndicator({ conversationId });
+
   const handleMessageTextChange = useCallback((text: string) => {
     setMessageText(text);
-    
-    // Send typing indicator
-    if (!isTyping && text.length > 0) {
-      setIsTyping(true);
-      socketClient.startTyping(conversationId);
-    }
-    
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    
-    // Set timeout to stop typing after 2 seconds of inactivity
-    typingTimeoutRef.current = setTimeout(() => {
-      setIsTyping(false);
-      socketClient.stopTyping(conversationId);
-    }, 500);
-  }, [conversationId, isTyping]);
+    handleTypingIndicator(text);
+  }, [handleTypingIndicator]);
+
+  // ============== Image Handlers Hook ==============
+  const { handlePickImage, handleTakePhoto } = useImageHandlers({
+    conversationId,
+    replyToMessage,
+    onReplyCleared: () => setReplyToMessage(null),
+  });
+
+  // ============== Audio Handlers Hook ==============
+  const audioRecording = useAudioRecording();
+  const { isRecording, duration: recordingDuration, currentWaveform } = audioRecording;
+  const { handleStartRecording, handleStopRecording, handleCancelRecording } = useAudioHandlers({
+    conversationId,
+    replyToMessage,
+    onReplyCleared: () => setReplyToMessage(null),
+    startRecording: audioRecording.startRecording,
+    stopRecording: audioRecording.stopRecording,
+    cancelRecording: audioRecording.cancelRecording,
+  });
+
+  // ============== Send Message Hook ==============
+  const sendMutation = useSendMessage(conversationId);
 
   const handleSend = useCallback(() => {
-    if (!messageText.trim()) return;
+    const trimmedText = messageText.trim();
+    if (!trimmedText) return;
+    
+    // Clear visual input immediately
+    inputRef.current?.setNativeProps({ text: '' });
+
+    // Send message
     sendMutation.mutate({
       conversationId,
       type: MessageType.TEXT,
-      content: messageText,
+      content: trimmedText,
       replyToId: replyToMessage?.id,
     });
-    setMessageText('');
-    setReplyToMessage(null);
-  }, [messageText, replyToMessage, conversationId, sendMutation]);
-
-  const handleReply = useCallback((msg: Message) => {
-    setReplyToMessage(msg);
+    
+    // Defer state clear
+    setTimeout(() => {
+      setMessageText('');
+      setReplyToMessage(null);
+    }, 1000);
     inputRef.current?.focus();
+  }, [messageText, conversationId, replyToMessage, sendMutation]);
+
+  const handleReply = useCallback((message: Message) => {
+    setReplyToMessage(message);
   }, []);
 
   const cancelReply = useCallback(() => {
@@ -119,111 +149,6 @@ export default function ChatScreen() {
     setImageViewerUri(`${API_BASE_URL}${imageUri}`);
     setImageViewerVisible(true);
   }, []);
-
-  // ============== Image Picker Handlers ==============
-  const handlePickImage = useCallback(async () => {
-    const imageUri = await pickImageFromLibrary();
-    if (imageUri) {
-      // Upload image and send message
-      try {
-        console.log('Starting image upload:', imageUri);
-        const result = await uploadImageMutation.mutateAsync(imageUri);
-        console.log('Image upload result:', result);
-        
-        if (result.success) {
-          console.log('Sending image message with URL:', result.file.url);
-          sendMutation.mutate({
-            conversationId,
-            type: MessageType.IMAGE,
-            mediaUrl: result.file.url,
-            replyToId: replyToMessage?.id,
-          });
-          setReplyToMessage(null);
-        } else {
-          Alert.alert('Error', 'Upload was not successful');
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        console.error('Image upload failed:', error);
-        Alert.alert('Error', `Failed to upload image: ${errorMsg}`);
-      }
-    }
-  }, [conversationId, replyToMessage, uploadImageMutation, sendMutation]);
-
-  const handleTakePhoto = useCallback(async () => {
-    const photoUri = await takePhotoWithCamera();
-    if (photoUri) {
-      // Upload photo and send message
-      try {
-        const result = await uploadImageMutation.mutateAsync(photoUri);
-        if (result.success) {
-          sendMutation.mutate({
-            conversationId,
-            type: MessageType.IMAGE,
-            mediaUrl: result.file.url,
-            replyToId: replyToMessage?.id,
-          });
-          setReplyToMessage(null);
-        }
-      } catch (error) {
-        console.error('Photo upload failed:', error);
-        Alert.alert('Error', 'Failed to upload photo. Please try again.');
-      }
-    }
-  }, [conversationId, replyToMessage, uploadImageMutation, sendMutation]);
-
-  // ============== Audio Recording Handlers ==============
-  const handleStartRecording = useCallback(async () => {
-    try {
-      await startRecording();
-    } catch (error) {
-      console.error('Start recording error:', error);
-      Alert.alert('Error', 'Failed to start recording. Check microphone permissions.');
-    }
-  }, [startRecording]);
-
-  const handleStopRecording = useCallback(async () => {
-    try {
-      const recordingResult = await stopRecording();
-      console.log('Recording result:', {
-        uri: recordingResult.uri,
-        duration: recordingResult.duration,
-        waveformLength: recordingResult.waveform.length,
-        mimeType: recordingResult.mimeType,
-      });
-      
-      // Upload audio file
-      console.log('Uploading audio from URI:', recordingResult.uri);
-      const uploadResult = await uploadAudioMutation.mutateAsync(recordingResult.uri);
-      
-      if (uploadResult.success) {
-        console.log('Upload successful:', uploadResult.file.url);
-        // Send audio message with waveform
-        sendMutation.mutate({
-          conversationId,
-          type: MessageType.AUDIO,
-          mediaUrl: uploadResult.file.url,
-          mediaMimeType: `audio/${recordingResult.mimeType}`,
-          mediaDuration: recordingResult.duration,
-          waveform: recordingResult.waveform,
-          replyToId: replyToMessage?.id,
-        });
-        setReplyToMessage(null);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('Recording error:', error);
-      Alert.alert('Error', `Failed to send audio: ${errorMessage}`);
-    }
-  }, [stopRecording, uploadAudioMutation, sendMutation, conversationId, replyToMessage]);
-
-  const handleCancelRecording = useCallback(async () => {
-    try {
-      await cancelRecording();
-    } catch (error) {
-      console.error('Cancel recording error:', error);
-    }
-  }, [cancelRecording]);
 
   // ============== Optimistic Messages ==============
   const { optimisticMessages } = useMessageStore();
@@ -248,10 +173,8 @@ export default function ChatScreen() {
     const index = combinedMessages.findIndex(msg => msg.id === message.replyTo!.id);
     if (index !== -1) {
       flatListRef.current?.scrollToIndex({ index, animated: true });
-
     }
   }, [combinedMessages]);
-
 
   // ============== Shared Animated Values ==============
   const sharedRowTranslateX = useSharedValue(0);
@@ -310,11 +233,25 @@ export default function ChatScreen() {
             isOwn={isOwn}
             onReply={handleReply}
             onShowMenu={() => {}}
+            onContextMenu={handleMessageContextMenu}
             onImagePress={handleImagePress}
             onScrollToReply={handleScrollToReply}
             sharedRowTranslateX={sharedRowTranslateX}
             sharedTimestampOpacity={sharedTimestampOpacity}
           />
+          {/* Audio player - rendered separately with width constraint */}
+          {item.type === MessageType.AUDIO && item.mediaUrl && (
+            <View className={`mt-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
+              <AudioWavePlayer
+                audioUrl={item.mediaUrl.startsWith('http') ? item.mediaUrl : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${item.mediaUrl}`.replace('/api/uploads', '/uploads')}
+                waveform={item.waveform || []}
+                duration={item.mediaDuration || 0}
+                isOwn={isOwn}
+                message={item}
+                onContextMenu={handleMessageContextMenu}
+              />
+            </View>
+          )}
           {isLastOwnMessage && (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-1">
               <MessageStatus reads={item.reads} currentUserId={user?.id} />
@@ -323,7 +260,7 @@ export default function ChatScreen() {
         </View>
       </ErrorBoundary>
     );
-  }, [combinedMessages, user?.id, handleReply, sharedRowTranslateX, sharedTimestampOpacity]);
+  }, [combinedMessages, user?.id, handleReply, handleMessageContextMenu, sharedRowTranslateX, sharedTimestampOpacity]);
 
   // ============== Loading State ==============
   if (messagesLoading) {
@@ -381,9 +318,10 @@ export default function ChatScreen() {
 
   // ============== Render ==============
   return (
-    <View className="flex-1 bg-white">
-      <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} />
-      <ChatHeader title={`${user?.name || 'Chat'}`} />
+    <>
+      <View className="flex-1 bg-white">
+        <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} />
+        <ChatHeader title={`${user?.name || 'Chat'}`} />
 
       <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0} style={{ flex: 1 }}>
         <View ref={messageAreaRef} style={{ flex: 1, position: 'relative' }}>
@@ -394,6 +332,7 @@ export default function ChatScreen() {
             inverted
             onScroll={handleScroll}
             scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
             onEndReached={() => {
               if (hasNextPage && !isFetchingNextPage) {
                 fetchNextPage();
@@ -438,7 +377,7 @@ export default function ChatScreen() {
               showScrollButtonStyle,
             ]}
             pointerEvents="box-none">
-            <ScrollToBottom visible={buttonVisible} onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true })} />
+            <ScrollToBottom visible={buttonVisible} onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false })} />
           </Animated.View>
         </View>
 
@@ -471,5 +410,16 @@ export default function ChatScreen() {
         />
       </KeyboardAvoidingView>
     </View>
+
+    {/* Message Context Menu Modal */}
+    <MessageContextMenuModal
+      visible={activeContextMessage !== null}
+      message={activeContextMessage}
+      currentUserId={user?.id}
+      onClose={closeContextMenu}
+      onDelete={handleDeleteMessage}
+      isDeleting={deleteMessageMutation.isPending}
+    />
+    </>
   );
 }

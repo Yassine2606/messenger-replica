@@ -5,6 +5,13 @@ import { AppError } from '../middleware';
 export class UploadController {
   async uploadFile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      console.log('Upload request:', {
+        hasFile: !!req.file,
+        mimeType: req.file?.mimetype,
+        fileType: req.body.fileType,
+        size: req.file?.size,
+      });
+
       if (!req.file) {
         throw new AppError(400, 'No file uploaded');
       }

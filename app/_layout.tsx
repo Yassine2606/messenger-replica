@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PortalProvider } from '@gorhom/portal';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { AuthProvider, SocketProvider } from '@/contexts';
 import { useSocketEventListener } from '@/hooks';
 
@@ -47,9 +48,11 @@ export default function Layout() {
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
               <SocketProvider>
-                <PortalProvider>
-                  <AppContent />
-                </PortalProvider>
+                <BottomSheetModalProvider>
+                  <PortalProvider>
+                    <AppContent />
+                  </PortalProvider>
+                </BottomSheetModalProvider>
               </SocketProvider>
             </AuthProvider>
           </QueryClientProvider>

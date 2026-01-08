@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useGetConversations, useProfile } from '@/hooks';
 import { ConversationItem, ErrorState } from '@/components/ui';
+import { socketClient } from '@/lib/socket';
 import type { Conversation } from '@/models';
 
 export default function ChatsScreen() {
@@ -13,6 +14,24 @@ export default function ChatsScreen() {
   const { data: user } = useProfile();
   const { data: conversations = [], isLoading, error, refetch } = useGetConversations();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  // Subscribe to socket updates for conversations list
+  React.useEffect(() => {
+    // Listen for new messages to keep conversation list fresh
+    const unsubscribeMessageNew = socketClient.onMessageNew(() => {
+      refetch();
+    });
+
+    // Listen for conversation updates
+    const unsubscribeConversationUpdated = socketClient.onConversationUpdated(() => {
+      refetch();
+    });
+
+    return () => {
+      unsubscribeMessageNew();
+      unsubscribeConversationUpdated();
+    };
+  }, [refetch]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -22,6 +41,11 @@ export default function ChatsScreen() {
       setIsRefreshing(false);
     }
   };
+
+  // Filter out empty conversations (no messages sent yet)
+  const filteredConversations = conversations.filter(
+    (conv) => conv.lastMessage !== null && conv.lastMessage !== undefined
+  );
 
   // Refetch conversations when screen comes into focus
   useFocusEffect(
@@ -47,7 +71,7 @@ export default function ChatsScreen() {
 
   const ItemSeparator = () => <View className="h-px bg-gray-100" />;
 
-  if (isLoading && conversations.length === 0) {
+  if (isLoading && filteredConversations.length === 0) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <ActivityIndicator size="large" color="#3B82F6" />
@@ -55,7 +79,7 @@ export default function ChatsScreen() {
     );
   }
 
-  if (error && conversations.length === 0) {
+  if (error && filteredConversations.length === 0) {
     return (
       <View
         className="flex-1 bg-white"
@@ -72,7 +96,7 @@ export default function ChatsScreen() {
     );
   }
 
-  if (conversations.length === 0) {
+  if (filteredConversations.length === 0) {
     return (
       <View
         className="flex-1 bg-white"
@@ -118,7 +142,7 @@ export default function ChatsScreen() {
       )}
 
       <FlashList
-        data={conversations}
+        data={filteredConversations}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ItemSeparatorComponent={ItemSeparator}

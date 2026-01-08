@@ -30,5 +30,11 @@ export { useUploadFile, useUploadImage, useUploadAudio } from './useUpload';
 // Audio
 export { useAudioRecording } from './useAudioRecording';
 
+// Chat
+export { useChatSend } from './useChatSend';
+export { useAudioHandlers } from './useAudioHandlers';
+export { useImageHandlers } from './useImageHandlers';
+export { useTypingIndicator } from './useTypingIndicator';
+
 // Socket Events
 export { useSocketEventListener } from './useSocketEventListener';
