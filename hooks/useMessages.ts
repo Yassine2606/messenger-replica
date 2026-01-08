@@ -75,6 +75,7 @@ interface SendMessageInput {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
+  waveform?: number[]; // Audio waveform for audio messages
   replyToId?: number;
 }
 
@@ -88,10 +89,13 @@ export function useSendMessage(conversationId: number) {
 
   return useMutation({
     mutationFn: async (input: SendMessageInput) => {
+      console.log('Sending message:', input);
       const message = await messageService.sendMessage(input);
+      console.log('Message sent successfully:', message);
       return message;
     },
     onMutate: async (input) => {
+      console.log('onMutate: Creating optimistic message for:', input);
       // Cancel any outgoing refetches
       await queryClient.cancelQueries({
         queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
@@ -119,6 +123,7 @@ export function useSendMessage(conversationId: number) {
         mediaUrl: input.mediaUrl ? String(input.mediaUrl) : undefined,
         mediaMimeType: input.mediaMimeType ? String(input.mediaMimeType) : undefined,
         mediaDuration: input.mediaDuration ? Number(input.mediaDuration) : undefined,
+        waveform: input.waveform ? Array.from(input.waveform) : undefined,
         replyToId: input.replyToId ? Number(input.replyToId) : undefined,
         isDeleted: false,
         reads: [],
@@ -127,6 +132,7 @@ export function useSendMessage(conversationId: number) {
       };
 
       // Add to store (which will assign unique negative ID)
+      console.log('Adding optimistic message to store:', tempId, optimisticMessage);
       addOptimisticMessage(tempId, optimisticMessage, conversationId);
 
       // Get the actual optimistic message with correct ID from store
@@ -139,6 +145,7 @@ export function useSendMessage(conversationId: number) {
       return { tempId, optimisticMessage: actualOptimisticMessage };
     },
     onSuccess: (message, input, context) => {
+      console.log('onSuccess: Message confirmed:', message, 'context:', context);
       if (context) {
         // Confirm optimistic message - remove from store and add actual message to cache
         confirmOptimisticMessage(context.tempId, message);
@@ -159,6 +166,7 @@ export function useSendMessage(conversationId: number) {
       }
     },
     onError: (error, input, context) => {
+      console.error('onError: Failed to send message:', error);
       if (context) {
         // Revert optimistic update from store
         removeOptimisticMessage(context.tempId);

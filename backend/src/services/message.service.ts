@@ -14,6 +14,7 @@ export interface SendMessageData {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
+  waveform?: number[]; // Audio waveform data
   replyToId?: number;
 }
 
@@ -48,6 +49,7 @@ export class MessageService {
           mediaUrl: data.mediaUrl,
           mediaMimeType: data.mediaMimeType,
           mediaDuration: data.mediaDuration,
+          waveform: data.waveform ? JSON.stringify(data.waveform) : undefined,
           replyToId: data.replyToId,
           isDeleted: false,
         },

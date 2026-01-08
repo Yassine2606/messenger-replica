@@ -18,6 +18,7 @@ router.post(
     body('mediaUrl').optional().isString(),
     body('mediaMimeType').optional().isString(),
     body('mediaDuration').optional().isInt(),
+    body('waveform').optional().isArray(),
     body('replyToId').optional().isInt(),
   ]),
   (req, res, next) => messageController.sendMessage(req, res, next)

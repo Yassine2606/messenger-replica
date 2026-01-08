@@ -10,4 +10,7 @@ export * from './ImageViewer';
 export * from './TypingIndicator';
 export { ErrorBoundary } from './ErrorBoundary';
 export * from './ErrorState';
-export * from './OptimizedImage';
+export * from './ReplyIndicator';
+export * from './TimeSeparator';
+export * from './AudioWavePlayer';
+export * from './AudioRecordingControls';

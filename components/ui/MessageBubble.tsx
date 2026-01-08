@@ -1,32 +1,33 @@
-import React, { memo, useCallback, useRef, useMemo } from 'react';
+import React, { memo, useCallback, useRef, useMemo, useEffect } from 'react';
 import { Text, View, Pressable } from 'react-native';
+import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  runOnJS,
   SharedValue,
+  interpolateColor,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
-import { GESTURE, ANIMATION, MESSAGE, COLORS } from '@/lib/chat-constants';
-import { OptimizedImage } from './OptimizedImage';
+import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
+import { ReplyIndicator } from './ReplyIndicator';
+import { AudioWavePlayer } from './AudioWavePlayer';
+import { scheduleOnRN } from 'react-native-worklets';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3000';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '');
 
 interface MessageBubbleProps {
   message: Message;
   isOwn: boolean;
-  isLastOwnMessage?: boolean;
   previousMessage?: Message;
   nextMessage?: Message;
-  currentUserId?: number;
   onReply?: (message: Message) => void;
-  onReactionSelect?: (reaction: string) => void;
-  onMenuAction?: (action: 'delete' | 'edit' | 'pin') => void;
   onShowMenu?: (coordinates: BubbleCoordinates | null) => void;
+  onImagePress?: (imageUri: string) => void;
+  onScrollToReply?: (message: Message) => void;
   // Shared animated values for synchronized timestamp drag across all messages of one side
   sharedRowTranslateX?: SharedValue<number>;
   sharedTimestampOpacity?: SharedValue<number>;
@@ -121,14 +122,12 @@ function getBorderRadius(
 function MessageBubbleComponent({
   message,
   isOwn,
-  isLastOwnMessage,
   previousMessage,
   nextMessage,
-  currentUserId,
   onReply,
-  onReactionSelect,
-  onMenuAction,
   onShowMenu,
+  onImagePress,
+  onScrollToReply,
   sharedRowTranslateX: propsSharedRowTranslateX,
   sharedTimestampOpacity: propsSharedTimestampOpacity,
 }: MessageBubbleProps) {
@@ -174,15 +173,7 @@ function MessageBubbleComponent({
       // Both sides: drag LEFT (negative) to reveal timestamp
       if (event.translationX < 0) {
         const maxDrag = GESTURE.MAX_TIMESTAMP_DRAG;
-        
-        if (isOwn) {
-          // Own messages (left side): drag left to reveal timestamps on left
-          sharedRowTranslateX.value = Math.max(event.translationX, -maxDrag);
-        } else {
-          // Opposite user messages (right side): drag left to reveal timestamps on right
-          sharedRowTranslateX.value = Math.max(event.translationX, -maxDrag);
-        }
-        
+        sharedRowTranslateX.value = Math.max(event.translationX, -maxDrag);
         sharedTimestampOpacity.value = Math.min(Math.abs(event.translationX) / maxDrag, 1);
       }
     })
@@ -193,7 +184,8 @@ function MessageBubbleComponent({
     });
 
   // GESTURE 2: Bubble-level gesture for reply (higher priority)
-  // Only triggers when dragging ON the bubble itself
+  // Own messages: swipe LEFT only
+  // Opposite messages: swipe RIGHT only
   const bubbleGesture = Gesture.Pan()
     .enabled(!message.isDeleted)
     .activeOffsetX([-GESTURE.ACTIVE_OFFSET_X, GESTURE.ACTIVE_OFFSET_X])
@@ -206,8 +198,9 @@ function MessageBubbleComponent({
       }
     })
     .onEnd((event) => {
-      if (Math.abs(event.translationX) > GESTURE.REPLY_SWIPE_THRESHOLD) {
-        runOnJS(handleReply)();
+      const isValidSwipeDirection = (isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0);
+      if (isValidSwipeDirection && Math.abs(event.translationX) > GESTURE.REPLY_SWIPE_THRESHOLD) {
+        scheduleOnRN(handleReply);
       }
       bubbleTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
       replyIconOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
@@ -284,100 +277,55 @@ function MessageBubbleComponent({
           </Animated.View>
 
           {/* Message bubble with long press for actions and swipe for reply */}
-          <Pressable 
-            ref={bubbleRef} 
+          <Pressable
+            ref={bubbleRef}
             onLongPress={handleLongPress}
             delayLongPress={300}
             disabled={message.isDeleted}>
             <GestureDetector gesture={bubbleGesture}>
               <Animated.View style={bubbleAnimatedStyle}>
-            {message.type === 'image' && message.mediaUrl ? (
-              <View className="max-w-[280px]">
-                {message.replyTo && !message.replyTo.isDeleted && (
-                  <View
-                    className={`mb-2 rounded-2xl border-l-2 pl-2 px-3 py-2 ${
-                      isOwn ? 'border-blue-300 bg-blue-500' : 'border-gray-400 bg-gray-200'
-                    }`}>
-                    <Text className={`text-xs font-medium ${isOwn ? 'text-blue-100' : 'text-gray-600'}`}>
-                      {message.replyTo.sender?.name || 'User'}
-                    </Text>
-                    <Text
-                      className={`text-xs ${isOwn ? 'text-blue-200' : 'text-gray-500'}`}
-                      numberOfLines={2}>
-                      {message.replyTo.type === 'image'
-                        ? '📷 Photo'
-                        : message.replyTo.type === 'audio'
-                          ? '🎵 Audio'
-                          : message.replyTo.content || 'Message'}
-                    </Text>
-                  </View>
-                )}
-                <OptimizedImage
-                  source={{ uri: `${API_BASE_URL}${message.mediaUrl}` }}
-                  style={{ width: 200, height: 200, borderRadius: 12 }}
-                  contentFit="cover"
-                  timeout={15000}
-                />
-                {message.content && (
-                  <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
-                    <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
-                      {message.content}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View
-                className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
-                style={borderRadiusStyle}>
-                {message.replyTo && !message.replyTo.isDeleted && (
-                  <View className={`mb-2 border-l-2 pl-2 ${isOwn ? 'border-blue-300' : 'border-gray-400'}`}>
-                    <Text className={`text-xs font-medium ${isOwn ? 'text-blue-100' : 'text-gray-600'}`}>
-                      {message.replyTo.sender?.name || 'User'}
-                    </Text>
-                    <Text
-                      className={`text-xs ${isOwn ? 'text-blue-200' : 'text-gray-500'}`}
-                      numberOfLines={2}>
-                      {message.replyTo.type === 'image'
-                        ? '📷 Photo'
-                        : message.replyTo.type === 'audio'
-                          ? '🎵 Audio'
-                          : message.replyTo.content || 'Message'}
-                    </Text>
-                  </View>
-                )}
-
-                {message.type === 'text' && (
-                  <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
-                    {message.content}
-                  </Text>
-                )}
-
-                {message.type === 'audio' && message.mediaUrl && (
-                  <View className="flex-row items-center gap-2">
-                    <Ionicons
-                      name="play-circle"
-                      size={32}
-                      color={isOwn ? 'white' : '#3B82F6'}
-                    />
-                    <View className="flex-1">
-                      <Text className={`text-sm ${isOwn ? 'text-white' : 'text-gray-900'}`}>
-                        Audio message
-                      </Text>
-                      {message.mediaDuration && (
-                        <Text className={`text-xs ${isOwn ? 'text-blue-100' : 'text-gray-500'}`}>
-                          {Math.floor(message.mediaDuration / 60)}:
-                          {(message.mediaDuration % 60).toString().padStart(2, '0')}
+                <ReplyIndicator message={message} isOwn={isOwn} onPress={() => onScrollToReply?.(message)} />
+                {message.type === 'image' && message.mediaUrl ? (
+                  <Animated.View className="max-w-[280px] overflow-hidden rounded-2xl">
+                    <Pressable onPress={() => onImagePress?.(message.mediaUrl!)}>
+                      <Image
+                        source={{ uri: `${API_BASE_URL}${message.mediaUrl}` }}
+                        style={{ width: 200, height: 200, borderRadius: 12 }}
+                        contentFit="cover"
+                      />
+                    </Pressable>
+                    {message.content && (
+                      <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
+                        <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                          {message.content}
                         </Text>
-                      )}
-                    </View>
+                      </View>
+                    )}
+                  </Animated.View>
+                ) : (
+                  <View
+                    className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
+                    style={borderRadiusStyle}>
+                    {message.type === 'text' && (
+                      <Text className={`text-base leading-6 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                        {message.content}
+                      </Text>
+                    )}
+
+                    {message.type === 'audio' && message.mediaUrl && (
+                      <View className="max-w-[320px]">
+                        <AudioWavePlayer
+                          audioUrl={`${API_BASE_URL}${message.mediaUrl}`}
+                          waveform={message.waveform || []}
+                          duration={message.mediaDuration || 0}
+                        />
+                      </View>
+                    )}
                   </View>
                 )}
-              </View>
-            )}
               </Animated.View>
             </GestureDetector>
-            </Pressable>
+          </Pressable>
 
           {/* Timestamp - revealed on right when row is dragged left */}
           <Animated.View
@@ -410,15 +358,14 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
     prevProps.message.content === nextProps.message.content &&
     prevProps.message.isDeleted === nextProps.message.isDeleted &&
     prevProps.message.reads?.length === nextProps.message.reads?.length &&
-    (prevProps.message.reads?.length === 0 || 
-     prevProps.message.reads?.some((read) => 
+    (prevProps.message.reads?.length === 0 ||
+     prevProps.message.reads?.some((read) =>
        !nextProps.message.reads?.some((r) => r.userId === read.userId)
      ) === false);
 
   return (
     messageEqual &&
     prevProps.isOwn === nextProps.isOwn &&
-    prevProps.currentUserId === nextProps.currentUserId &&
     prevProps.previousMessage?.id === nextProps.previousMessage?.id &&
     prevProps.nextMessage?.id === nextProps.nextMessage?.id
   );

@@ -18,21 +18,24 @@ export function SocketProvider({ children }: SocketProviderProps) {
   const { isHydrated } = useAuth();
   const [isConnected, setIsConnected] = React.useState(false);
 
+  // Handle token change - connect or disconnect
   useEffect(() => {
     // Wait for auth to be hydrated
     if (!isHydrated) {
       return;
     }
 
-    // No token after hydration
     if (!token) {
+      // Token cleared - disconnect socket immediately
+      socketClient.disconnect();
+      setIsConnected(false);
       return;
     }
 
-    // Connect to socket
+    // Token exists - connect socket
     socketClient.connect(token);
 
-    // Listen for connection state
+    // Listen for connection state changes
     const unsubscribeConnect = socketClient.subscribe('connected', () => {
       setIsConnected(true);
     });
@@ -49,7 +52,6 @@ export function SocketProvider({ children }: SocketProviderProps) {
     return () => {
       unsubscribeConnect();
       unsubscribeDisconnect();
-      // Don't disconnect here - let logout handle it
     };
   }, [token, isHydrated]);
 

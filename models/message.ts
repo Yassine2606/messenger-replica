@@ -44,6 +44,7 @@ export interface Message {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
+  waveform?: number[]; // Audio waveform data (normalized 0-1)
   replyToId?: number;
   replyTo?: Partial<Message>;
   isDeleted: boolean;

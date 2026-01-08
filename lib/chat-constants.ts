@@ -42,7 +42,7 @@ export const MESSAGE = {
   BORDER_RADIUS_BASE: 18,
   BORDER_RADIUS_TIGHT: 4,
   // Time threshold for grouping messages (in milliseconds)
-  GROUPING_TIME_THRESHOLD: 60000, // 1 minute
+  GROUPING_TIME_THRESHOLD: 300000, // 5 minutes
 } as const;
 
 // Typing Indicator

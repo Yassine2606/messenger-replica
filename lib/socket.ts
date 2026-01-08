@@ -152,10 +152,12 @@ class SocketClient {
    */
   private setupEventHandlers(socket: Socket): void {
     socket.on('connect', () => {
+      console.log('[Socket] Connected');
       this.eventManager.emit('connected');
     });
 
     socket.on('disconnect', (reason) => {
+      console.log('[Socket] Disconnected:', reason);
       this.eventManager.emit('disconnected', reason);
     });
 
@@ -167,6 +169,17 @@ class SocketClient {
     socket.on('error', (payload: SocketErrorPayload) => {
       console.error('[Socket] Server error:', payload);
       this.eventManager.emit('server_error', payload);
+    });
+
+    // Heartbeat to keep connection alive
+    const heartbeatInterval = setInterval(() => {
+      if (socket.connected) {
+        socket.emit('ping');
+      }
+    }, 25000); // Every 25 seconds
+
+    socket.once('disconnect', () => {
+      clearInterval(heartbeatInterval);
     });
 
     socket.on('message:new', (payload: SocketMessagePayload) => {

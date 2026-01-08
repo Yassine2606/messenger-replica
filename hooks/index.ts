@@ -27,5 +27,8 @@ export {
 // Upload
 export { useUploadFile, useUploadImage, useUploadAudio } from './useUpload';
 
+// Audio
+export { useAudioRecording } from './useAudioRecording';
+
 // Socket Events
 export { useSocketEventListener } from './useSocketEventListener';

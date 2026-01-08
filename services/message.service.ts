@@ -8,6 +8,7 @@ export interface SendMessageData {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
+  waveform?: number[]; // Audio waveform for audio messages
   replyToId?: number;
 }
 

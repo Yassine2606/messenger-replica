@@ -48,7 +48,7 @@ export function ChatInputFooter({
     <View
       className="bg-white border-t border-gray-100"
       style={{
-        paddingBottom: Math.max(insets.bottom, 8),
+        paddingBottom: insets.bottom,
         paddingTop: 8,
       }}>
       {/* Reply indicator */}
@@ -58,13 +58,23 @@ export function ChatInputFooter({
             <Text className="text-xs font-semibold text-blue-600">
               Replying to {replyToMessage.sender?.name || 'User'}
             </Text>
-            <Text className="mt-1 text-sm text-gray-800" numberOfLines={1}>
-              {replyToMessage.type === 'image'
-                ? '📷 Photo'
-                : replyToMessage.type === 'audio'
-                  ? '🎵 Audio'
-                  : replyToMessage.content || 'Message'}
-            </Text>
+            <View className="mt-1 flex-row items-center">
+              {replyToMessage.type === 'image' ? (
+                <>
+                  <Ionicons name="image" size={16} color="#6B7280" />
+                  <Text className="ml-1 text-sm text-gray-800">Photo</Text>
+                </>
+              ) : replyToMessage.type === 'audio' ? (
+                <>
+                  <Ionicons name="mic" size={16} color="#6B7280" />
+                  <Text className="ml-1 text-sm text-gray-800">Audio</Text>
+                </>
+              ) : (
+                <Text className="text-sm text-gray-800" numberOfLines={1}>
+                  {replyToMessage.content || 'Message'}
+                </Text>
+              )}
+            </View>
           </View>
           <Pressable
             onPress={onCancelReply}

@@ -7,7 +7,7 @@ export class MessageController {
   async sendMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
-      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } = req.body;
+      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, waveform, replyToId } = req.body;
 
       const message = await messageService.sendMessage({
         conversationId,
@@ -17,6 +17,7 @@ export class MessageController {
         mediaUrl,
         mediaMimeType,
         mediaDuration,
+        waveform,
         replyToId,
       });
 

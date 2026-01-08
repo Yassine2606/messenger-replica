@@ -1,11 +1,11 @@
-import { memo, useEffect } from 'react';
+import { memo } from 'react';
 import { TouchableOpacity } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { 
-  useSharedValue, 
   useAnimatedStyle, 
   withTiming,
+  useDerivedValue,
+  interpolate,
 } from 'react-native-reanimated';
 
 interface ScrollToBottomProps {
@@ -16,16 +16,10 @@ interface ScrollToBottomProps {
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 function ScrollToBottomComponent({ visible, onPress }: ScrollToBottomProps) {
-  const insets = useSafeAreaInsets();
-  const combined = useSharedValue(0);
-
-  useEffect(() => {
-    combined.value = withTiming(visible ? 1 : 0, { duration: 120 });
-  }, [visible]);
+  const animatedValue = useDerivedValue(() => withTiming(visible ? 1 : 0, { duration: 100 }));
 
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: combined.value,
-    transform: [{ translateY: combined.value === 0 ? 60 : 0 }],
+    transform: [{ translateY: interpolate(animatedValue.value, [0, 1], [60, 0]) }],
   }));
 
 
@@ -34,10 +28,6 @@ function ScrollToBottomComponent({ visible, onPress }: ScrollToBottomProps) {
       style={[
         animatedStyle,
         { 
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
           alignItems: 'center',
           pointerEvents: visible ? 'auto' : 'none',
         }
