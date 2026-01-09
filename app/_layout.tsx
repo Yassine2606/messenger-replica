@@ -15,7 +15,6 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: Infinity, // Data is kept fresh via socket invalidation
       retry: 1,
-      refetchOnWindowFocus: true,
     },
     mutations: {
       retry: 0,

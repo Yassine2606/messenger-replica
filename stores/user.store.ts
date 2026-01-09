@@ -1,20 +1,23 @@
 import { create } from 'zustand';
 
+interface UserPresenceState {
+  userId: number;
+  lastSeen: string; // ISO timestamp
+}
+
 interface UserTypingState {
   typingUsers: Set<number>; // Set of user IDs currently typing
-  onlineUsers: Set<number>; // Set of user IDs currently online
+  userPresence: Map<number, UserPresenceState>; // Map of userId to presence state
   addTypingUser: (userId: number) => void;
   removeTypingUser: (userId: number) => void;
-  setOnlineUsers: (userIds: number[]) => void;
-  addOnlineUser: (userId: number) => void;
-  removeOnlineUser: (userId: number) => void;
+  setUserPresence: (userId: number, lastSeen: string) => void;
+  getUserPresence: (userId: number) => UserPresenceState | undefined;
   isUserTyping: (userId: number) => boolean;
-  isUserOnline: (userId: number) => boolean;
 }
 
 export const useUserStore = create<UserTypingState>((set, get) => ({
   typingUsers: new Set(),
-  onlineUsers: new Set(),
+  userPresence: new Map(),
 
   addTypingUser: (userId: number) => {
     set((state) => ({
@@ -30,29 +33,19 @@ export const useUserStore = create<UserTypingState>((set, get) => ({
     });
   },
 
-  setOnlineUsers: (userIds: number[]) => {
-    set({ onlineUsers: new Set(userIds) });
-  },
-
-  addOnlineUser: (userId: number) => {
-    set((state) => ({
-      onlineUsers: new Set(state.onlineUsers).add(userId),
-    }));
-  },
-
-  removeOnlineUser: (userId: number) => {
+  setUserPresence: (userId: number, lastSeen: string) => {
     set((state) => {
-      const newSet = new Set(state.onlineUsers);
-      newSet.delete(userId);
-      return { onlineUsers: newSet };
+      const newMap = new Map(state.userPresence);
+      newMap.set(userId, { userId, lastSeen });
+      return { userPresence: newMap };
     });
+  },
+
+  getUserPresence: (userId: number) => {
+    return get().userPresence.get(userId);
   },
 
   isUserTyping: (userId: number) => {
     return get().typingUsers.has(userId);
-  },
-
-  isUserOnline: (userId: number) => {
-    return get().onlineUsers.has(userId);
   },
 }));

@@ -1,12 +1,8 @@
 import { useQuery, useMutation, useQueryClient, UseQueryResult, useInfiniteQuery, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { Message, MessageType, User } from '@/models';
+import { messageQueryKeys } from '@/lib/query-keys';
 import { messageService } from '@/services';
 import { useMessageStore, useAuthStore } from '@/stores';
-
-const MESSAGE_QUERY_KEYS = {
-  all: ['messages'] as const,
-  byConversation: (conversationId: number) => [...MESSAGE_QUERY_KEYS.all, 'conversation', conversationId] as const,
-};
 
 interface UseGetMessagesOptions {
   limit?: number;
@@ -23,7 +19,7 @@ export function useGetMessages(
   enabled = true
 ) {
   return useQuery({
-    queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId || 0),
+    queryKey: messageQueryKeys.byConversation(conversationId || 0),
     queryFn: async () => {
       if (!conversationId) throw new Error('Conversation ID is required');
       return messageService.getMessages(conversationId, options);
@@ -44,7 +40,7 @@ export function useInfiniteMessages(
   enabled = true
 ) {
   return useInfiniteQuery({
-    queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId || 0),
+    queryKey: messageQueryKeys.byConversation(conversationId || 0),
     queryFn: async ({ pageParam }: { pageParam?: number }) => {
       if (!conversationId) throw new Error('Conversation ID is required');
       return messageService.getMessages(conversationId, {
@@ -95,7 +91,7 @@ export function useSendMessage(conversationId: number) {
     onMutate: async (input) => {
       // Cancel any outgoing refetches
       await queryClient.cancelQueries({
-        queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
+        queryKey: messageQueryKeys.byConversation(conversationId),
       });
 
       // Create plain sender object (avoid Zustand proxy issues)
@@ -146,7 +142,7 @@ export function useSendMessage(conversationId: number) {
         confirmOptimisticMessage(context.tempId, message);
 
         // Update cache with actual message
-        queryClient.setQueryData(MESSAGE_QUERY_KEYS.byConversation(conversationId), (old: any) => {
+        queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
           if (!old || !old.pages) return { pages: [[message]], pageParams: [] };
           const lastPageIndex = old.pages.length - 1;
           const newPages = [...old.pages];
@@ -171,25 +167,6 @@ export function useSendMessage(conversationId: number) {
 }
 
 /**
- * Hook to mark conversation as read
- */
-export function useMarkConversationAsRead(conversationId: number) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async () => {
-      await messageService.markConversationAsRead(conversationId);
-    },
-    onSuccess: () => {
-      // Invalidate messages for this conversation to refresh read status
-      queryClient.invalidateQueries({
-        queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
-      });
-    },
-  });
-}
-
-/**
  * Hook to delete a message
  */
 export function useDeleteMessage(conversationId: number) {
@@ -201,7 +178,7 @@ export function useDeleteMessage(conversationId: number) {
     },
     onSuccess: (_, messageId) => {
       // Update cache for infinite query (which uses pages structure)
-      queryClient.setQueryData(MESSAGE_QUERY_KEYS.byConversation(conversationId), (old: any) => {
+      queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
         if (!old || !old.pages) return old;
         
         const newPages = old.pages.map((page: Message[]) =>
@@ -219,7 +196,7 @@ export function useDeleteMessage(conversationId: number) {
  */
 export function useSearchMessages(conversationId: number | null, query: string, enabled = false) {
   return useQuery({
-    queryKey: [...MESSAGE_QUERY_KEYS.byConversation(conversationId || 0), 'search', query],
+    queryKey: [...messageQueryKeys.byConversation(conversationId || 0), 'search', query],
     queryFn: async () => {
       if (!conversationId) throw new Error('Conversation ID is required');
       return messageService.searchMessages(conversationId, query);

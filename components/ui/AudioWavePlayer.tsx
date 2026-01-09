@@ -85,7 +85,7 @@ export const AudioWavePlayer = React.memo(function AudioWavePlayer({
   
   // Shared values for smooth continuous animation
   const playbackProgress = useSharedValue(0);
-  const containerWidthRef = useRef(240); // Default fallback width
+  const containerWidth = useSharedValue(240); // Use shared value instead of ref
   const playbackStartTimeRef = useRef<number | null>(null);
   const playbackStartPositionRef = useRef(0);
 
@@ -101,8 +101,8 @@ export const AudioWavePlayer = React.memo(function AudioWavePlayer({
 
   // Handle container width measurement
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
-    containerWidthRef.current = Math.max(100, event.nativeEvent.layout.width - 16); // Subtract padding
-  }, []);
+    containerWidth.value = Math.max(100, event.nativeEvent.layout.width - 16); // Subtract padding
+  }, [containerWidth]);
 
   // Detect play state changes and start/stop continuous animation
   useAnimatedReaction(
@@ -154,7 +154,7 @@ export const AudioWavePlayer = React.memo(function AudioWavePlayer({
 
   // Animated style for smooth horizontal indicator bar
   const indicatorStyle = useAnimatedStyle(() => {
-    const translateX = playbackProgress.value * containerWidthRef.current;
+    const translateX = playbackProgress.value * containerWidth.value;
     return {
       transform: [{ translateX }],
     };
@@ -192,15 +192,15 @@ export const AudioWavePlayer = React.memo(function AudioWavePlayer({
       if (!duration || !status.isLoaded) return;
 
       const { locationX } = event.nativeEvent;
-      const containerWidth = containerWidthRef.current;
-      const progress = Math.max(0, Math.min(1, locationX / containerWidth));
+      const currentContainerWidth = containerWidth.value;
+      const progress = Math.max(0, Math.min(1, locationX / currentContainerWidth));
       const seekTime = progress * (duration / 1000);
 
       // Immediately update indicator on seek
       playbackProgress.value = progress;
       player.seekTo(seekTime);
     },
-    [duration, player, playbackProgress, status.isLoaded]
+    [duration, player, playbackProgress, status.isLoaded, containerWidth]
   );
 
   const formatTime = useCallback((seconds: number) => {

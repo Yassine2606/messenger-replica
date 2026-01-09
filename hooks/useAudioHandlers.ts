@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
-import { useUploadAudio, useSendMessage } from './index';
+import { useSendMessage } from './useMessages';
+import { useUploadAudio } from './useUpload';
 import { MessageType, Message } from '@/models';
 
 interface UseAudioHandlersProps {

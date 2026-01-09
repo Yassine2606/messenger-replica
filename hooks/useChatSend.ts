@@ -1,8 +1,9 @@
 import { useCallback, useRef } from 'react';
 import { TextInput } from 'react-native';
-import { useSendMessage, useUploadImage, useUploadAudio } from './index';
-import { MessageType, Message } from '@/models';
 import { Alert } from 'react-native';
+import { useSendMessage } from './useMessages';
+import { useUploadImage, useUploadAudio } from './useUpload';
+import { MessageType, Message } from '@/models';
 
 interface UseChatSendProps {
   conversationId: number;

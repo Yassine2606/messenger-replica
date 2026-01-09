@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, ReactNode } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { socketClient } from '@/lib/socket';
 import { useAuthStore } from '@/stores';
 import { useAuth } from './AuthProvider';
@@ -55,6 +56,39 @@ export function SocketProvider({ children }: SocketProviderProps) {
     };
   }, [token, isHydrated]);
 
+  // Presence ping interval - keeps online status fresh globally
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    const presencePingInterval = setInterval(() => {
+      socketClient.sendPresencePing();
+    }, 30000); // Send presence ping every 30 seconds
+
+    return () => {
+      clearInterval(presencePingInterval);
+    };
+  }, [isConnected]);
+
+  // Reconnect socket when app comes to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [token]);
+
+  const handleAppStateChange = (state: AppStateStatus) => {
+    if (state === 'active') {
+      // App came to foreground - ensure socket is connected
+      if (!socketClient.isConnected() && token && isHydrated) {
+        socketClient.connect(token);
+      }
+    }
+  };
+
   return (
     <SocketContext.Provider value={{ isConnected }}>
       {children}
@@ -69,3 +103,7 @@ export function useSocket() {
   }
   return context;
 }
+
+// Note: useSocket hook is exported for context access but primary socket management
+// is handled by useSocketEventListener hook which should be called at the root level
+// for global socket event handling and query invalidation

@@ -1,18 +1,9 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
-import { SocketMessagePayload, SocketMessageStatusPayload, SocketTypingPayload, SocketUserStatusPayload } from '@/models';
+import { messageQueryKeys, conversationQueryKeys } from '@/lib/query-keys';
+import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, SocketTypingPayload, SocketUserStatusPayload } from '@/models';
 import { useUserStore } from '@/stores';
-
-const MESSAGE_QUERY_KEYS = {
-  all: ['messages'] as const,
-  byConversation: (conversationId: number) => [...MESSAGE_QUERY_KEYS.all, 'conversation', conversationId] as const,
-};
-
-const CONVERSATION_QUERY_KEYS = {
-  all: ['conversations'] as const,
-  detail: (conversationId: number) => [...CONVERSATION_QUERY_KEYS.all, conversationId] as const,
-};
 
 // Global reference for socket activity tracking (shared across all hook instances)
 let lastActivityTime = Date.now();
@@ -27,65 +18,87 @@ const resetActivityTimer = () => {
  */
 export function useSocketEventListener() {
   const queryClient = useQueryClient();
-  const { addTypingUser, removeTypingUser, addOnlineUser, removeOnlineUser } = useUserStore();
+  const { addTypingUser, removeTypingUser, setUserPresence } = useUserStore();
 
   useEffect(() => {
-    // Message received - invalidate messages query for that conversation AND conversation list
-    const unsubscribeMessageNew = socketClient.onMessageNew((payload: SocketMessagePayload) => {
+    // Unified message event - invalidate queries and update UI atomically
+    const unsubscribeMessageUnified = socketClient.onMessageUnified((payload: UnifiedMessageEvent) => {
       resetActivityTimer();
       const { conversationId } = payload;
-      // Invalidate messages for the conversation with refetch
+      
+      // Invalidate messages for the conversation
       queryClient.invalidateQueries({
-        queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
+        queryKey: messageQueryKeys.byConversation(conversationId),
         refetchType: 'all',
       });
-      // Invalidate conversations list to update last message and timestamp
+      
+      // Invalidate conversations list to update last message, timestamp, and unread counts
       queryClient.invalidateQueries({
-        queryKey: CONVERSATION_QUERY_KEYS.all,
+        queryKey: conversationQueryKeys.list(),
         refetchType: 'all',
+      });
+
+      // Force refetch conversations immediately (critical for real-time updates)
+      queryClient.refetchQueries({
+        queryKey: conversationQueryKeys.list(),
+      }).catch((error) => {
+        console.error('[Socket] Failed to refetch conversations on message:', error);
       });
     });
 
-    // Message status update - invalidate messages query and refetch
-    const unsubscribeMessageStatus = socketClient.onMessageStatus((payload: SocketMessageStatusPayload) => {
+    // Unified status update event - handles read/delivered status changes with unread counts
+    const unsubscribeStatusUnified = socketClient.onStatusUnified((payload: UnifiedStatusUpdateEvent) => {
       resetActivityTimer();
       const { conversationId } = payload;
+      
+      // Invalidate messages to reflect read/delivered status
       queryClient.invalidateQueries({
-        queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
+        queryKey: messageQueryKeys.byConversation(conversationId),
         refetchType: 'all',
+      });
+      
+      // Invalidate conversations to update unread counts
+      queryClient.invalidateQueries({
+        queryKey: conversationQueryKeys.list(),
+        refetchType: 'all',
+      });
+
+      // Force refetch conversations immediately for real-time unread count updates
+      queryClient.refetchQueries({
+        queryKey: conversationQueryKeys.list(),
+      }).catch((error) => {
+        console.error('[Socket] Failed to refetch conversations on status update:', error);
       });
     });
 
-    // Message deleted - invalidate messages query
-    const unsubscribeMessageDeleted = socketClient.subscribe('message:deleted', (payload: any) => {
+    // Presence events - track user joining/leaving conversation
+    const unsubscribePresenceJoined = socketClient.onPresenceJoined(() => {
       resetActivityTimer();
-      const { conversationId } = payload;
-      queryClient.invalidateQueries({
-        queryKey: MESSAGE_QUERY_KEYS.byConversation(conversationId),
-        refetchType: 'all',
-      });
+      // Presence changes don't require query invalidation (UI state only)
     });
 
-    // Conversation updated - invalidate conversations queries
-    const unsubscribeConversationUpdated = socketClient.onConversationUpdated((payload) => {
+    const unsubscribePresenceLeft = socketClient.onPresenceLeft(() => {
       resetActivityTimer();
-      queryClient.invalidateQueries({
-        queryKey: CONVERSATION_QUERY_KEYS.all,
-        refetchType: 'all',
-      });
-      queryClient.invalidateQueries({
-        queryKey: CONVERSATION_QUERY_KEYS.detail(payload.conversation.id),
-        refetchType: 'all',
-      });
+      // Presence changes don't require query invalidation (UI state only)
     });
 
-    // User status update - track online/offline status
+    // User status update - track online/offline status with lastSeen timestamp
     const unsubscribeUserStatus = socketClient.onUserStatus((payload: SocketUserStatusPayload) => {
-      if (payload.status === 'online') {
-        addOnlineUser(payload.userId);
-      } else {
-        removeOnlineUser(payload.userId);
-      }
+      // Update user presence with lastSeen timestamp
+      setUserPresence(payload.userId, payload.lastSeen || new Date().toISOString());
+      
+      // Invalidate conversations to refresh participant lastSeen display
+      queryClient.invalidateQueries({
+        queryKey: conversationQueryKeys.list(),
+        refetchType: 'all',
+      });
+
+      // Force refetch conversations immediately for real-time lastSeen updates
+      queryClient.refetchQueries({
+        queryKey: conversationQueryKeys.list(),
+      }).catch((error) => {
+        console.error('[Socket] Failed to refetch conversations on user status:', error);
+      });
     });
 
     // Typing start - track user typing
@@ -100,35 +113,35 @@ export function useSocketEventListener() {
       removeTypingUser(payload.userId);
     });
 
-    // Socket activity timeout detection - refetch all data if no activity for 60 seconds
+    // Socket activity timeout detection - refetch all data if no activity for 30 seconds
     const activityTimeoutInterval = setInterval(() => {
       const timeSinceLastActivity = Date.now() - lastActivityTime;
-      const INACTIVITY_THRESHOLD = 60000; // 60 seconds
+      const INACTIVITY_THRESHOLD = 30000; // 30 seconds (reduced from 60s for better responsiveness)
 
       if (timeSinceLastActivity > INACTIVITY_THRESHOLD) {
         // Force refresh all message and conversation queries
         queryClient.invalidateQueries({
-          queryKey: MESSAGE_QUERY_KEYS.all,
+          queryKey: messageQueryKeys.all,
           refetchType: 'all',
         });
         queryClient.invalidateQueries({
-          queryKey: CONVERSATION_QUERY_KEYS.all,
+          queryKey: conversationQueryKeys.list(),
           refetchType: 'all',
         });
         // Reset timer after refresh
         lastActivityTime = Date.now();
       }
-    }, 30000); // Check every 30 seconds
+    }, 15000); // Check every 15 seconds (reduced from 30s for better responsiveness)
 
     return () => {
       clearInterval(activityTimeoutInterval);
-      unsubscribeMessageNew();
-      unsubscribeMessageStatus();
-      unsubscribeMessageDeleted();
-      unsubscribeConversationUpdated();
+      unsubscribeMessageUnified();
+      unsubscribeStatusUnified();
+      unsubscribePresenceJoined();
+      unsubscribePresenceLeft();
       unsubscribeUserStatus();
       unsubscribeTypingStart();
       unsubscribeTypingStop();
     };
-  }, [queryClient, addTypingUser, removeTypingUser, addOnlineUser, removeOnlineUser]);
+  }, [queryClient, addTypingUser, removeTypingUser, setUserPresence]);
 }

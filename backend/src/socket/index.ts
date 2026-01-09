@@ -3,7 +3,7 @@ import { Server, Socket } from 'socket.io';
 import { config } from '../config';
 import { messageService, conversationService, userService } from '../services';
 import { authService } from '../services/auth.service';
-import { SocketMessagePayload, SocketMessageStatusPayload, SocketConversationUpdatePayload, SocketUserStatusPayload, messageToDTO } from '../types';
+import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, SocketUserStatusPayload, messageToDTO } from '../types';
 import { AppError } from '../middleware';
 import { ReadStatus } from '../models/MessageRead';
 
@@ -71,9 +71,13 @@ export class SocketManager {
       await this.broadcastUserStatus(userId, 'online');
 
       socket.on('disconnect', () => {
-        this.handleDisconnect(socket, userId);
+        this.handleDisconnect(socket, userId).catch((error) => {
+          console.error('Error handling disconnect:', error);
+        });
       });
 
+      // Presence heartbeat - keeps online status fresh (every 30 seconds)
+      socket.on('presence:ping', () => this.handlePresencePing(userId));
       socket.on('message:send', (data) => this.handleMessageSend(socket, userId, data));
       socket.on('message:read', (data) => this.handleMessageRead(socket, userId, data));
       socket.on('message:delivered', (data) => this.handleMessageDelivered(socket, userId, data));
@@ -85,7 +89,8 @@ export class SocketManager {
   }
 
   /**
-   * Handle message send
+   * Handle message send - UNIFIED EVENT PATTERN
+   * Sends one consolidated event with message + unread counts for each recipient
    */
   private async handleMessageSend(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
     try {
@@ -113,6 +118,7 @@ export class SocketManager {
         return;
       }
 
+      // Create message
       const message = await messageService.sendMessage({
         conversationId,
         senderId: userId,
@@ -124,62 +130,60 @@ export class SocketManager {
         replyToId,
       });
 
-      // Get conversation participants to check who's online
-      const messageConversation = await conversationService.getConversation(conversationId, userId);
-      const messageParticipants = messageConversation.participants || [];
+      // Get conversation with participants
+      const conversation = await conversationService.getConversation(conversationId, userId);
+      const participants = conversation.participants || [];
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
 
-      // Process status updates for each participant atomically
-      const statusUpdates: SocketMessageStatusPayload[] = [];
+      // Mark messages as delivered/read for online users based on their state
       const activeViewers = this.activeConversationViewers.get(conversationId);
+      const messagesToMarkDelivered: number[] = [];
+      const messagesToMarkRead: number[] = [];
 
-      for (const participant of messageParticipants) {
+      for (const participant of participants) {
         if (participant.id && participant.id !== userId) {
           const isOnline = this.userSessions.has(participant.id);
           const isActiveViewer = activeViewers?.has(participant.id);
           
           if (isActiveViewer) {
-            // User is actively viewing - mark as READ
-            await messageService.markAsRead([message.id], participant.id);
-            statusUpdates.push({
-              messageId: message.id,
-              conversationId,
-              status: ReadStatus.READ,
-              userId: participant.id,
-              readAt: new Date().toISOString(),
-            });
+            messagesToMarkRead.push(participant.id);
           } else if (isOnline) {
-            // User is online but not viewing - mark as DELIVERED
-            await messageService.markAsDelivered([message.id], participant.id);
-            statusUpdates.push({
-              messageId: message.id,
-              conversationId,
-              status: ReadStatus.DELIVERED,
-              userId: participant.id,
-              readAt: new Date().toISOString(),
-            });
+            messagesToMarkDelivered.push(participant.id);
           }
-          // If offline, status remains SENT (set during message creation)
+        }
+      }
+
+      // Batch mark as read and delivered
+      if (messagesToMarkRead.length > 0) {
+        for (const recipientId of messagesToMarkRead) {
+          await messageService.markAsRead([message.id], recipientId);
+        }
+      }
+      if (messagesToMarkDelivered.length > 0) {
+        for (const recipientId of messagesToMarkDelivered) {
+          await messageService.markAsDelivered([message.id], recipientId);
         }
       }
 
       // Reload message with final state
       const reloadedMessage = await messageService.getMessageWithRelations(message.id);
       const messageWithReads = messageToDTO(reloadedMessage);
-      
-      // Emit message once with complete reads array
-      const payload: SocketMessagePayload = {
-        message: messageWithReads,
+
+      // Get unread counts for all participants (SINGLE QUERY instead of N+1)
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create unified event with message + per-recipient unread counts
+      const unifiedEvent: UnifiedMessageEvent = {
         conversationId,
+        message: messageWithReads,
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
       };
-      this.io.to(`conversation:${conversationId}`).emit('message:new', payload);
 
-      // Emit status updates (for real-time UI updates)
-      for (const statusUpdate of statusUpdates) {
-        this.io.to(`conversation:${conversationId}`).emit('message:status', statusUpdate);
-      }
-
-      // Broadcast conversation update to all participants
-      await this.broadcastConversationUpdate(conversationId, messageParticipants);
+      // Send single consolidated event to entire conversation
+      this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to send message';
       socket.emit('error', {
@@ -190,7 +194,8 @@ export class SocketManager {
   }
 
   /**
-   * Handle message read status update (supports batch)
+   * Handle message read status update - BATCHED UNIFIED EVENT
+   * Combines multiple read updates into one event with unread count changes
    */
   private async handleMessageRead(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
     try {
@@ -217,24 +222,32 @@ export class SocketManager {
 
       await messageService.markAsRead(idsToMark, userId);
 
-      // Emit status update to conversation for each message
-      const readAt = new Date().toISOString();
-      for (const id of idsToMark) {
-        const payload: SocketMessageStatusPayload = {
-          messageId: id,
-          conversationId,
-          status: ReadStatus.READ,
-          userId,
-          readAt,
-        };
-
-        this.io.to(`conversation:${conversationId}`).emit('message:status', payload);
-      }
-
-      // Broadcast conversation update to all participants
+      // Get conversation to find all participants
       const conversation = await conversationService.getConversation(conversationId, userId);
       const participants = conversation.participants || [];
-      await this.broadcastConversationUpdate(conversationId, participants);
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+
+      // Get unread counts for all participants (SINGLE QUERY)
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create batched unified event with all status updates
+      const readAt = new Date().toISOString();
+      const unifiedEvent: UnifiedStatusUpdateEvent = {
+        conversationId,
+        updates: idsToMark.map(id => ({
+          messageId: id,
+          userId,
+          status: ReadStatus.READ,
+          readAt,
+        })),
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
+      };
+
+      // Send single consolidated event to entire conversation
+      this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to update message status';
       socket.emit('error', {
@@ -245,7 +258,8 @@ export class SocketManager {
   }
 
   /**
-   * Handle message delivered status update
+   * Handle message delivered status update - UNIFIED EVENT
+   * Triggered when client explicitly marks a message as delivered
    */
   private async handleMessageDelivered(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
     try {
@@ -256,21 +270,41 @@ export class SocketManager {
         return;
       }
 
+      // Get message to find conversation
+      const message = await messageService.getMessageWithRelations(messageId);
+      const conversationId = message.conversationId;
+
+      // Mark as delivered
       await messageService.markAsDelivered([messageId], userId);
 
-      // Get message to find conversation ID
-      const message = await messageService.getMessageWithRelations(messageId);
-      
-      // Emit status update to conversation
-      const payload: SocketMessageStatusPayload = {
-        messageId,
-        conversationId: message.conversationId,
-        status: ReadStatus.DELIVERED,
-        userId,
-        readAt: new Date().toISOString(),
+      // Get conversation for unread count calculation
+      const conversation = await conversationService.getConversation(conversationId, userId);
+      const participants = conversation.participants || [];
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+
+      // Get unread counts
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create unified event
+      const readAt = new Date().toISOString();
+      const unifiedEvent: UnifiedStatusUpdateEvent = {
+        conversationId,
+        updates: [
+          {
+            messageId,
+            userId,
+            status: ReadStatus.DELIVERED,
+            readAt,
+          },
+        ],
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
       };
 
-      this.io.to(`conversation:${message.conversationId}`).emit('message:status', payload);
+      // Emit to conversation
+      this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to mark message as delivered';
       socket.emit('error', {
@@ -281,7 +315,8 @@ export class SocketManager {
   }
 
   /**
-   * Handle conversation join (user enters chat)
+   * Handle conversation join (user enters chat) - UNIFIED PATTERN
+   * Auto-marks unread messages as read, sends consolidated event
    */
   private async handleConversationJoin(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
     try {
@@ -290,7 +325,6 @@ export class SocketManager {
       // Prevent duplicate joins from same socket
       const socketRooms = this.socketConversations.get(socket.id);
       if (socketRooms?.has(conversationId)) {
-        // Already joined, skip
         return;
       }
 
@@ -305,7 +339,7 @@ export class SocketManager {
       socket.join(`conversation:${conversationId}`);
       socketRooms?.add(conversationId);
 
-      // Track user as active viewer (only if not already tracked)
+      // Track user as active viewer
       if (!this.activeConversationViewers.has(conversationId)) {
         this.activeConversationViewers.set(conversationId, new Set());
       }
@@ -316,27 +350,36 @@ export class SocketManager {
       if (wasNotViewing) {
         const markedMessages = await messageService.markConversationAsRead(conversationId, userId);
 
-        // Emit status updates for each marked message
         if (markedMessages.length > 0) {
-          const readAt = new Date().toISOString();
-          for (const messageId of markedMessages) {
-            const payload: SocketMessageStatusPayload = {
-              messageId,
-              conversationId,
-              status: ReadStatus.READ,
-              userId,
-              readAt,
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', payload);
-          }
+          const participants = conversation.participants || [];
+          const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
 
-          // Broadcast conversation updates to all participants after marking as read
-          await this.broadcastConversationUpdate(conversationId, conversation.participants || []);
+          // Get unread counts ONCE for all participants
+          const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+          // Create single unified event with all marked messages + updated unread counts
+          const readAt = new Date().toISOString();
+          const unifiedEvent: UnifiedStatusUpdateEvent = {
+            conversationId,
+            updates: markedMessages.map(messageId => ({
+              messageId,
+              userId,
+              status: ReadStatus.READ,
+              readAt,
+            })),
+            conversationUpdates: participantIds.map(id => ({
+              userId: id,
+              unreadCount: unreadCounts.get(id) || 0,
+            })),
+          };
+
+          // Single consolidated event to entire conversation
+          this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
         }
       }
 
-      // Broadcast that user is viewing conversation (for typing indicators, etc)
-      socket.to(`conversation:${conversationId}`).emit('conversation:user-joined', {
+      // Broadcast that user is viewing conversation (for presence awareness)
+      socket.to(`conversation:${conversationId}`).emit('presence:joined', {
         conversationId,
         userId,
       });
@@ -384,7 +427,8 @@ export class SocketManager {
           }
         }
 
-        socket.to(`conversation:${conversationId}`).emit('conversation:user-left', {
+        // Broadcast presence leave event
+        socket.to(`conversation:${conversationId}`).emit('presence:left', {
           conversationId,
           userId,
         });
@@ -398,9 +442,23 @@ export class SocketManager {
   }
 
   /**
+   * Handle presence ping from client - keeps online status fresh and real-time
+   * Called every 30 seconds by the frontend to prevent staleness
+   */
+  private async handlePresencePing(userId: number): Promise<void> {
+    try {
+      // Broadcast fresh online status to all conversations where user is participant
+      await this.broadcastUserStatus(userId, 'online');
+    } catch (error) {
+      console.error('[SocketManager] Failed to handle presence ping:', error);
+      // Don't emit error to client - presence ping is non-critical
+    }
+  }
+
+  /**
    * Handle user disconnect
    */
-  private handleDisconnect(socket: AuthenticatedSocket, userId: number): void {
+  private async handleDisconnect(socket: AuthenticatedSocket, userId: number): Promise<void> {
     // Get conversations this socket was in
     const socketRooms = this.socketConversations.get(socket.id);
     
@@ -441,45 +499,69 @@ export class SocketManager {
       userSockets.delete(socket.id);
       if (userSockets.size === 0) {
         this.userSessions.delete(userId);
+        // Update lastSeen before broadcasting offline status
+        await userService.updateLastSeen(userId);
         this.broadcastUserStatus(userId, 'offline');
       }
     }
   }
 
   /**
-   * Handle user connected - mark pending messages as delivered
+   * Handle user connected - mark pending messages as delivered (BATCHED)
+   * Batches delivery updates by conversation instead of individual events
    */
   private async handleUserConnected(userId: number): Promise<void> {
     try {
       // Get all undelivered messages for this user
       const undeliveredMessages = await messageService.getUndeliveredMessages(userId);
 
-      if (undeliveredMessages.length > 0) {
-        const messageIds = undeliveredMessages.map((m) => m.id);
+      if (undeliveredMessages.length === 0) {
+        return;
+      }
+
+      // Mark all as delivered in batch
+      const messageIds = undeliveredMessages.map((m) => m.id);
+      await messageService.markAsDelivered(messageIds, userId);
+
+      // Group by conversation and create unified events
+      const conversationGroups = undeliveredMessages.reduce((acc, msg) => {
+        if (!acc[msg.conversationId]) {
+          acc[msg.conversationId] = [];
+        }
+        acc[msg.conversationId].push(msg.id);
+        return acc;
+      }, {} as Record<number, number[]>);
+
+      // Send unified event per conversation
+      for (const [convIdStr, msgIds] of Object.entries(conversationGroups)) {
+        const conversationId = Number(convIdStr);
         
-        // Mark all as delivered
-        await messageService.markAsDelivered(messageIds, userId);
+        try {
+          const conversation = await conversationService.getConversation(conversationId, userId);
+          const participants = conversation.participants || [];
+          const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
 
-        // Broadcast delivery status for each conversation
-        const conversationGroups = undeliveredMessages.reduce((acc, msg) => {
-          if (!acc[msg.conversationId]) {
-            acc[msg.conversationId] = [];
-          }
-          acc[msg.conversationId].push(msg.id);
-          return acc;
-        }, {} as Record<number, number[]>);
+          // Get unread counts once per conversation
+          const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
 
-        for (const [conversationId, msgIds] of Object.entries(conversationGroups)) {
-          for (const messageId of msgIds) {
-            const payload: SocketMessageStatusPayload = {
+          const readAt = new Date().toISOString();
+          const unifiedEvent: UnifiedStatusUpdateEvent = {
+            conversationId,
+            updates: msgIds.map(messageId => ({
               messageId,
-              conversationId: Number(conversationId),
-              status: ReadStatus.DELIVERED,
               userId,
-              readAt: new Date().toISOString(),
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', payload);
-          }
+              status: ReadStatus.DELIVERED,
+              readAt,
+            })),
+            conversationUpdates: participantIds.map(id => ({
+              userId: id,
+              unreadCount: unreadCounts.get(id) || 0,
+            })),
+          };
+
+          this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
+        } catch (error) {
+          console.error(`Failed to process delivery for conversation ${conversationId}:`, error);
         }
       }
     } catch (error) {
@@ -530,46 +612,34 @@ export class SocketManager {
   }
 
   /**
-   * Broadcast user online/offline status
+   * Broadcast user online/offline status - OPTIMIZED
+   * Only sends to users in shared conversations with this user
    */
   private async broadcastUserStatus(userId: number, status: 'online' | 'offline'): Promise<void> {
     try {
       // Update user status in database
       await userService.updateUserStatus(userId, status);
 
+      // Get current user data to include lastSeen
+      const user = await userService.getUserById(userId);
+      const lastSeen = user?.lastSeen || new Date();
+
       const payload: SocketUserStatusPayload = {
         userId,
         status,
-        lastSeen: new Date().toISOString(),
+        lastSeen: lastSeen.toISOString(),
       };
 
-      this.io.emit('user:status', payload);
-    } catch (error) {
-      console.error('Failed to broadcast user status:', error);
-    }
-  }
+      // Get all conversations for this user to find who cares about their status
+      const userConversations = await conversationService.getConversations(userId);
+      const allConversationIds = userConversations.map(c => c.id);
 
-  /**
-   * Broadcast conversation update to all participants
-   */
-  private async broadcastConversationUpdate(
-    conversationId: number,
-    participants: Array<{ id: number; name: string; avatarUrl?: string; status?: string; lastSeen?: string }>
-  ): Promise<void> {
-    for (const participant of participants) {
-      if (participant.id) {
-        const conversation = await conversationService.getConversation(conversationId, participant.id);
-        const conversationPayload: SocketConversationUpdatePayload = {
-          conversation,
-          userId: participant.id,
-        };
-        const userSockets = this.userSessions.get(participant.id);
-        if (userSockets) {
-          for (const socketId of userSockets) {
-            this.io.to(socketId).emit('conversation:updated', conversationPayload);
-          }
-        }
+      // Only broadcast to conversations where this user is a participant
+      for (const conversationId of allConversationIds) {
+        this.io.to(`conversation:${conversationId}`).emit('user:status', payload);
       }
+    } catch (error) {
+      console.error('[SocketManager] Failed to broadcast user status:', error);
     }
   }
 
@@ -593,61 +663,69 @@ export class SocketManager {
   }
 
   /**
-   * Mark message as delivered for online users (excluding sender)
+   * Broadcast unified message event to conversation
+   * Called by REST API after message is created
    */
-  async markMessageAsDeliveredForOnlineUsers(messageId: number, conversationId: number, senderId: number): Promise<void> {
-    const conversation = await conversationService.getConversation(conversationId, senderId);
-    const participants = conversation.participants || [];
+  async broadcastUnifiedMessage(conversationId: number, messageId: number, senderId: number): Promise<void> {
+    try {
+      // Get conversation with participants
+      const conversation = await conversationService.getConversation(conversationId, senderId);
+      const participants = conversation.participants || [];
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
 
-    for (const participant of participants) {
-      if (participant.id && participant.id !== senderId) {
-        const isOnline = this.userSessions.has(participant.id);
-        
-        if (isOnline) {
-          // Check if user is actively viewing this conversation
-          const isActiveViewer = this.activeConversationViewers.get(conversationId)?.has(participant.id);
+      // Mark messages as delivered/read for online users based on their state
+      const activeViewers = this.activeConversationViewers.get(conversationId);
+      const messagesToMarkDelivered: number[] = [];
+      const messagesToMarkRead: number[] = [];
+
+      for (const participant of participants) {
+        if (participant.id && participant.id !== senderId) {
+          const isOnline = this.userSessions.has(participant.id);
+          const isActiveViewer = activeViewers?.has(participant.id);
           
           if (isActiveViewer) {
-            // User is viewing - mark as READ
-            await messageService.markAsRead([messageId], participant.id);
-            
-            const statusPayload: SocketMessageStatusPayload = {
-              messageId,
-              conversationId,
-              status: ReadStatus.READ,
-              userId: participant.id,
-              readAt: new Date().toISOString(),
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', statusPayload);
-          } else {
-            // User is online but not viewing - mark as DELIVERED
-            await messageService.markAsDelivered([messageId], participant.id);
-            
-            const deliveryPayload: SocketMessageStatusPayload = {
-              messageId,
-              conversationId,
-              status: ReadStatus.DELIVERED,
-              userId: participant.id,
-              readAt: new Date().toISOString(),
-            };
-            this.io.to(`conversation:${conversationId}`).emit('message:status', deliveryPayload);
+            messagesToMarkRead.push(participant.id);
+          } else if (isOnline) {
+            messagesToMarkDelivered.push(participant.id);
           }
         }
       }
+
+      // Batch mark as read and delivered
+      if (messagesToMarkRead.length > 0) {
+        for (const recipientId of messagesToMarkRead) {
+          await messageService.markAsRead([messageId], recipientId);
+        }
+      }
+      if (messagesToMarkDelivered.length > 0) {
+        for (const recipientId of messagesToMarkDelivered) {
+          await messageService.markAsDelivered([messageId], recipientId);
+        }
+      }
+
+      // Reload message with final state
+      const reloadedMessage = await messageService.getMessageWithRelations(messageId);
+      const messageWithReads = messageToDTO(reloadedMessage);
+
+      // Get unread counts for all participants (SINGLE QUERY instead of N+1)
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create unified event with message + per-recipient unread counts
+      const unifiedEvent: UnifiedMessageEvent = {
+        conversationId,
+        message: messageWithReads,
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
+      };
+
+      // Send single consolidated event to entire conversation
+      this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
+    } catch (error) {
+      console.error('[SocketManager] Failed to broadcast unified message:', error);
+      throw error;
     }
-
-    // Broadcast conversation update after status changes
-    await this.broadcastConversationUpdate(conversationId, participants);
-  }
-
-  /**
-   * Broadcast conversation update to all participants (public method)
-   */
-  async broadcastConversationUpdateToParticipants(
-    conversationId: number,
-    participants: Array<{ id: number; name: string; avatarUrl?: string; status?: string; lastSeen?: string }>
-  ): Promise<void> {
-    await this.broadcastConversationUpdate(conversationId, participants);
   }
 
   /**

@@ -69,6 +69,16 @@ export class UserService {
       where: { id: userId },
     });
   }
+
+  /**
+   * Update lastSeen timestamp for user
+   */
+  async updateLastSeen(userId: number): Promise<void> {
+    await User.update(
+      { lastSeen: new Date() },
+      { where: { id: userId } }
+    );
+  }
 }
 
 export const userService = new UserService();

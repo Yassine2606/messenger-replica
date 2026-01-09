@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { Text, View } from 'react-native';
 import type { Conversation } from '@/models';
+import { useUserPresence } from '@/hooks';
+import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
 
 interface ConversationItemProps {
   conversation: Conversation;
@@ -15,6 +17,12 @@ function formatTime(date?: Date | string): string {
 
 function ConversationItemComponent({ conversation, currentUserId }: ConversationItemProps) {
   const otherParticipant = conversation.participants?.find((p) => p.id !== currentUserId);
+  // Get real-time presence from store with fallback to conversation data
+  // Only call if participant exists to avoid looking up userId=0
+  const realtimeLastSeen = otherParticipant 
+    ? useUserPresence(otherParticipant.id, otherParticipant.lastSeen)
+    : undefined;
+  
   const lastMessage = conversation.lastMessage;
   const isOwnMessage = lastMessage?.senderId === currentUserId;
 
@@ -23,8 +31,8 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
     if (lastMessage.isDeleted) return isOwnMessage ? 'You deleted a message' : 'Message deleted';
 
     let content = '';
-    if (lastMessage.type === 'image') content = '📷 Photo';
-    else if (lastMessage.type === 'audio') content = '🎵 Audio';
+    if (lastMessage.type === 'image') content = 'Sent an image';
+    else if (lastMessage.type === 'audio') content = 'Sent an audio';
     else content = lastMessage.content || '';
 
     return isOwnMessage ? `You: ${content}` : content;
@@ -44,6 +52,11 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
   const hasUnread = (conversation.unreadCount || 0) > 0;
   const status = getMessageStatus();
   const messagePreview = getMessagePreview();
+  
+  // Get online status from real-time store
+  const statusText = realtimeLastSeen ? formatTimeAgo(realtimeLastSeen) : null;
+  const shouldShowStatus = realtimeLastSeen ? shouldShowOnlineIndicator(realtimeLastSeen) : false;
+  const isOnline = statusText === 'Online';
 
   return (
     <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-3 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
@@ -54,8 +67,18 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
             {otherParticipant?.name?.charAt(0).toUpperCase() || '?'}
           </Text>
         </View>
-        {otherParticipant?.status === 'online' && otherParticipant?.id && (
-          <View className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-white" />
+        {shouldShowStatus && (
+          <View className="absolute bottom-0 right-0 items-center justify-center">
+            {statusText === 'Online' ? (
+              <View className="h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+            ) : (
+                <View className="rounded-full border border-gray-300 bg-white px-0.5 py-0.5">
+                <Text className="text-xs font-medium text-gray-600">
+                  {statusText}
+                </Text>
+                </View>
+            )}
+          </View>
         )}
       </View>
 
@@ -97,24 +120,4 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
   );
 }
 
-export const ConversationItem = memo(ConversationItemComponent, (prev, next) => {
-  // Return true if props are equal (don't re-render), false if different (re-render)
-  if (prev.conversation.id !== next.conversation.id) return false;
-  if (prev.conversation.unreadCount !== next.conversation.unreadCount) return false;
-  if (prev.conversation.lastMessageAt !== next.conversation.lastMessageAt) return false;
-  if (prev.conversation.lastMessage?.id !== next.conversation.lastMessage?.id) return false;
-  
-  // Check if lastMessage reads changed (for status updates)
-  const prevReads = prev.conversation.lastMessage?.reads;
-  const nextReads = next.conversation.lastMessage?.reads;
-  if (prevReads !== nextReads) {
-    if (!prevReads || !nextReads || prevReads.length !== nextReads.length) return false;
-    for (let i = 0; i < prevReads.length; i++) {
-      if (prevReads[i].status !== nextReads[i].status) return false;
-    }
-  }
-  
-  if (prev.currentUserId !== next.currentUserId) return false;
-  
-  return true; // Props are equal, skip re-render
-});
+export const ConversationItem = memo(ConversationItemComponent);

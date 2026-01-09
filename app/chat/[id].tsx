@@ -5,7 +5,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSharedValue, useAnimatedStyle, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, AudioWavePlayer, MessageContextMenuModal } from '@/components/ui';
+import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, AudioWavePlayer, VoiceMessagePlayer, MessageContextMenuModal } from '@/components/ui';
 import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
 import { socketClient } from '@/lib/socket';
@@ -117,22 +117,29 @@ export default function ChatScreen() {
     const trimmedText = messageText.trim();
     if (!trimmedText) return;
     
-    // Clear visual input immediately
+    // Clear visual input immediately for UX feedback
     inputRef.current?.setNativeProps({ text: '' });
 
-    // Send message
+    // Send message with proper callbacks to handle state cleanup
     sendMutation.mutate({
       conversationId,
       type: MessageType.TEXT,
       content: trimmedText,
       replyToId: replyToMessage?.id,
+    }, {
+      onSuccess: () => {
+        // Only clear state on successful send
+        setMessageText('');
+        setReplyToMessage(null);
+      },
+      onError: (error) => {
+        // Restore text on error so user can retry
+        console.error('Failed to send message:', error);
+        inputRef.current?.setNativeProps({ text: trimmedText });
+        setMessageText(trimmedText);
+      },
     });
     
-    // Defer state clear
-    setTimeout(() => {
-      setMessageText('');
-      setReplyToMessage(null);
-    }, 1000);
     inputRef.current?.focus();
   }, [messageText, conversationId, replyToMessage, sendMutation]);
 
@@ -242,7 +249,7 @@ export default function ChatScreen() {
           {/* Audio player - rendered separately with width constraint */}
           {item.type === MessageType.AUDIO && item.mediaUrl && (
             <View className={`mt-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
-              <AudioWavePlayer
+              <VoiceMessagePlayer
                 audioUrl={item.mediaUrl.startsWith('http') ? item.mediaUrl : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${item.mediaUrl}`.replace('/api/uploads', '/uploads')}
                 waveform={item.waveform || []}
                 duration={item.mediaDuration || 0}
@@ -266,7 +273,7 @@ export default function ChatScreen() {
   if (messagesLoading) {
     return (
       <View className="flex-1 bg-white">
-        <ChatHeader title={`${user?.name || 'Chat'}`} />
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#3B82F6" />
         </View>
@@ -290,7 +297,7 @@ export default function ChatScreen() {
   if (messagesError && !messages.length) {
     return (
       <View className="flex-1 bg-white">
-        <ChatHeader title={`${user?.name || 'Chat'}`} />
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
         <View className="flex-1 items-center justify-center">
           <ErrorState
             error={messagesError as Error}
@@ -321,7 +328,7 @@ export default function ChatScreen() {
     <>
       <View className="flex-1 bg-white">
         <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} />
-        <ChatHeader title={`${user?.name || 'Chat'}`} />
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
 
       <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0} style={{ flex: 1 }}>
         <View ref={messageAreaRef} style={{ flex: 1, position: 'relative' }}>
@@ -333,6 +340,7 @@ export default function ChatScreen() {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             keyboardShouldPersistTaps="handled"
+            maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 10 }}
             onEndReached={() => {
               if (hasNextPage && !isFetchingNextPage) {
                 fetchNextPage();

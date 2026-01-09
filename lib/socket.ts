@@ -1,8 +1,8 @@
 import { io, Socket } from 'socket.io-client';
 import type {
-  SocketMessagePayload,
-  SocketMessageStatusPayload,
-  SocketConversationUpdatePayload,
+  UnifiedMessageEvent,
+  UnifiedStatusUpdateEvent,
+  SocketPresencePayload,
   SocketUserStatusPayload,
   SocketTypingPayload,
   SocketErrorPayload,
@@ -39,6 +39,8 @@ class SocketConnection {
       reconnectionDelayMax: 5000,
     });
 
+    // Call onSetup immediately so setupEventHandlers can register listeners
+    // before the socket connects
     onSetup(this.socket);
   }
 
@@ -99,7 +101,8 @@ class SocketEventManager {
 class SocketClient {
   private connection: SocketConnection;
   private eventManager: SocketEventManager;
-  private pendingActions: Array<() => void> = [];
+  private pendingActions: Map<string, () => void> = new Map();
+  private actionCounter = 0;
 
   constructor() {
     this.connection = new SocketConnection();
@@ -117,7 +120,7 @@ class SocketClient {
   disconnect(): void {
     this.connection.disconnect();
     this.eventManager.clear();
-    this.pendingActions = [];
+    this.pendingActions.clear();
   }
 
   isConnected(): boolean {
@@ -126,38 +129,51 @@ class SocketClient {
 
   /**
    * Queue action if socket not ready, otherwise execute immediately
+   * Returns action key for potential cancellation
    */
-  private queueOrExecute(action: () => void): void {
+  private queueOrExecute(action: () => void, deduplicationKey?: string): string {
     if (this.isConnected()) {
       action();
+      return '';
     } else {
-      this.pendingActions.push(action);
+      // Use provided key or generate unique key to prevent duplicates
+      const actionKey = deduplicationKey || `action-${this.actionCounter++}`;
+      this.pendingActions.set(actionKey, action);
+      return actionKey;
     }
+  }
+
+  /**
+   * Cancel a pending action by its key
+   */
+  private cancelPendingAction(key: string): void {
+    this.pendingActions.delete(key);
   }
 
   /**
    * Flush all pending actions once socket is ready
    */
   private flushPendingActions(): void {
-    while (this.pendingActions.length > 0) {
-      const action = this.pendingActions.shift();
-      if (action) {
-        action();
-      }
+    const actions = Array.from(this.pendingActions.values());
+    this.pendingActions.clear();
+    for (const action of actions) {
+      action();
     }
   }
 
   /**
    * Setup socket event listeners (internal)
+   * Removes previous listeners to prevent duplication on reconnection
    */
   private setupEventHandlers(socket: Socket): void {
+    // Remove all previous listeners to prevent duplication on reconnect
+    socket.removeAllListeners();
+
     socket.on('connect', () => {
-      console.log('[Socket] Connected');
       this.eventManager.emit('connected');
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected:', reason);
       this.eventManager.emit('disconnected', reason);
     });
 
@@ -182,20 +198,20 @@ class SocketClient {
       clearInterval(heartbeatInterval);
     });
 
-    socket.on('message:new', (payload: SocketMessagePayload) => {
-      this.eventManager.emit('message:new', payload);
+    socket.on('message:unified', (payload: UnifiedMessageEvent) => {
+      this.eventManager.emit('message:unified', payload);
     });
 
-    socket.on('message:status', (payload: SocketMessageStatusPayload) => {
-      this.eventManager.emit('message:status', payload);
+    socket.on('status:unified', (payload: UnifiedStatusUpdateEvent) => {
+      this.eventManager.emit('status:unified', payload);
     });
 
-    socket.on('message:deleted', (payload: { messageId: number; conversationId: number; deletedAt: string }) => {
-      this.eventManager.emit('message:deleted', payload);
+    socket.on('presence:joined', (payload: SocketPresencePayload) => {
+      this.eventManager.emit('presence:joined', payload);
     });
 
-    socket.on('conversation:updated', (payload: SocketConversationUpdatePayload) => {
-      this.eventManager.emit('conversation:updated', payload);
+    socket.on('presence:left', (payload: SocketPresencePayload) => {
+      this.eventManager.emit('presence:left', payload);
     });
 
     socket.on('user:status', (payload: SocketUserStatusPayload) => {
@@ -236,25 +252,35 @@ class SocketClient {
     });
   }
 
+  /**
+   * Send presence ping to server to keep online status fresh
+   * Non-critical operation - uses queueOrExecute to handle when socket is not ready
+   */
+  sendPresencePing(): void {
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('presence:ping');
+    }, 'presence-ping'); // Use consistent key to avoid queuing duplicates
+  }
+
   // Event subscription methods
   subscribe<T = any>(event: string, handler: (data: T) => void): () => void {
     return this.eventManager.subscribe(event, handler);
   }
 
-  onMessageNew(handler: (payload: SocketMessagePayload) => void): () => void {
-    return this.subscribe('message:new', handler);
+  onMessageUnified(handler: (payload: UnifiedMessageEvent) => void): () => void {
+    return this.subscribe('message:unified', handler);
   }
 
-  onMessageStatus(handler: (payload: SocketMessageStatusPayload) => void): () => void {
-    return this.subscribe('message:status', handler);
+  onStatusUnified(handler: (payload: UnifiedStatusUpdateEvent) => void): () => void {
+    return this.subscribe('status:unified', handler);
   }
 
-  onMessageDeleted(handler: (payload: { messageId: number; conversationId: number; deletedAt: string }) => void): () => void {
-    return this.subscribe('message:deleted', handler);
+  onPresenceJoined(handler: (payload: SocketPresencePayload) => void): () => void {
+    return this.subscribe('presence:joined', handler);
   }
 
-  onConversationUpdated(handler: (payload: SocketConversationUpdatePayload) => void): () => void {
-    return this.subscribe('conversation:updated', handler);
+  onPresenceLeft(handler: (payload: SocketPresencePayload) => void): () => void {
+    return this.subscribe('presence:left', handler);
   }
 
   onUserStatus(handler: (payload: SocketUserStatusPayload) => void): () => void {

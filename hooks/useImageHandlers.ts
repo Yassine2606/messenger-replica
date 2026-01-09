@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
-import { useUploadImage, useSendMessage } from './index';
+import { useSendMessage } from './useMessages';
+import { useUploadImage } from './useUpload';
 import { MessageType, Message } from '@/models';
 import { pickImageFromLibrary, takePhotoWithCamera } from '@/lib/image-picker';
 

@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useGetConversations, useProfile } from '@/hooks';
 import { ConversationItem, ErrorState } from '@/components/ui';
-import { socketClient } from '@/lib/socket';
 import type { Conversation } from '@/models';
 
 export default function ChatsScreen() {
@@ -14,24 +13,6 @@ export default function ChatsScreen() {
   const { data: user } = useProfile();
   const { data: conversations = [], isLoading, error, refetch } = useGetConversations();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
-
-  // Subscribe to socket updates for conversations list
-  React.useEffect(() => {
-    // Listen for new messages to keep conversation list fresh
-    const unsubscribeMessageNew = socketClient.onMessageNew(() => {
-      refetch();
-    });
-
-    // Listen for conversation updates
-    const unsubscribeConversationUpdated = socketClient.onConversationUpdated(() => {
-      refetch();
-    });
-
-    return () => {
-      unsubscribeMessageNew();
-      unsubscribeConversationUpdated();
-    };
-  }, [refetch]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

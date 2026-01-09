@@ -6,7 +6,6 @@ export {
   useGetMessages,
   useInfiniteMessages,
   useSendMessage,
-  useMarkConversationAsRead,
   useDeleteMessage,
   useSearchMessages,
 } from './useMessages';
@@ -38,3 +37,4 @@ export { useTypingIndicator } from './useTypingIndicator';
 
 // Socket Events
 export { useSocketEventListener } from './useSocketEventListener';
+export { useUserPresence } from './useUserPresence';

@@ -68,36 +68,67 @@ export interface UserDTO {
 }
 
 /**
- * Socket Event Payloads
+ * Socket Event Payloads - Unified consolidated events
  */
-export interface SocketMessagePayload {
+
+/**
+ * Unified message event - sent to all users in conversation
+ * Contains message + updated conversation state for each recipient
+ */
+export interface UnifiedMessageEvent {
+  conversationId: number;
   message: MessageDTO;
+  // Per-recipient conversation state with unread count specific to them
+  conversationUpdates: Array<{
+    userId: number;
+    unreadCount: number;
+  }>;
+}
+
+/**
+ * Unified status update event - batched read/delivered updates
+ * Combines multiple messages' status changes into one event
+ */
+export interface UnifiedStatusUpdateEvent {
   conversationId: number;
+  updates: Array<{
+    messageId: number;
+    userId: number;
+    status: ReadStatus;
+    readAt?: string;
+  }>;
+  // Include updated unread counts for each user
+  conversationUpdates: Array<{
+    userId: number;
+    unreadCount: number;
+  }>;
 }
 
-export interface SocketMessageStatusPayload {
-  messageId: number;
-  conversationId: number;
-  status: ReadStatus;
-  userId: number;
-  readAt?: string;
-}
-
-export interface SocketConversationUpdatePayload {
-  conversation: ConversationDTO;
-  userId: number;
-}
-
+/**
+ * User online/offline status - only sent to users in shared conversations
+ */
 export interface SocketUserStatusPayload {
   userId: number;
   status: 'online' | 'offline';
   lastSeen?: string;
 }
 
+/**
+ * Typing indicator - for real-time typing feedback
+ */
 export interface SocketTypingPayload {
   conversationId: number;
   userId: number;
   isTyping: boolean;
+}
+
+/**
+ * User joined/left conversation - for presence awareness
+ */
+export interface SocketPresencePayload {
+  conversationId: number;
+  userId: number;
+  event: 'joined' | 'left';
 }
 
 /**

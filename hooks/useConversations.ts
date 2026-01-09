@@ -1,19 +1,14 @@
 import { useQuery, useMutation, useQueryClient, UseQueryResult } from '@tanstack/react-query';
 import { Conversation } from '@/models';
+import { conversationQueryKeys } from '@/lib/query-keys';
 import { conversationService } from '@/services';
-
-const CONVERSATION_QUERY_KEYS = {
-  all: ['conversations'] as const,
-  list: () => [...CONVERSATION_QUERY_KEYS.all, 'list'] as const,
-  detail: (conversationId: number) => [...CONVERSATION_QUERY_KEYS.all, conversationId] as const,
-};
 
 /**
  * Hook to fetch all conversations for current user with real-time updates via socket
  */
 export function useGetConversations(enabled = true): UseQueryResult<Conversation[], Error> {
   return useQuery({
-    queryKey: CONVERSATION_QUERY_KEYS.list(),
+    queryKey: conversationQueryKeys.list(),
     queryFn: async () => {
       return conversationService.getConversations();
     },
@@ -33,7 +28,7 @@ export function useGetConversation(
   enabled = true
 ): UseQueryResult<Conversation, Error> {
   return useQuery({
-    queryKey: CONVERSATION_QUERY_KEYS.detail(conversationId || 0),
+    queryKey: conversationQueryKeys.detail(conversationId || 0),
     queryFn: async () => {
       if (!conversationId) throw new Error('Conversation ID is required');
       return conversationService.getConversation(conversationId);
@@ -58,7 +53,7 @@ export function useCreateOrGetConversation() {
     },
     onSuccess: (conversation) => {
       // Add to conversations list cache
-      queryClient.setQueryData(CONVERSATION_QUERY_KEYS.list(), (old: Conversation[] | undefined) => {
+      queryClient.setQueryData(conversationQueryKeys.list(), (old: Conversation[] | undefined) => {
         if (!old) return [conversation];
         // Replace if exists, otherwise add
         const exists = old.find((c) => c.id === conversation.id);
@@ -66,7 +61,7 @@ export function useCreateOrGetConversation() {
       });
 
       // Set detail cache
-      queryClient.setQueryData(CONVERSATION_QUERY_KEYS.detail(conversation.id), conversation);
+      queryClient.setQueryData(conversationQueryKeys.detail(conversation.id), conversation);
     },
   });
 }

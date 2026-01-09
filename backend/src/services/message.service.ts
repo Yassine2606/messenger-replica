@@ -316,6 +316,48 @@ export class MessageService {
   }
 
   /**
+   * Get unread message count for each user in a conversation (batch operation)
+   * Returns map of userId -> unreadCount
+   */
+  async getUnreadCountsForConversation(conversationId: number, userIds: number[]): Promise<Map<number, number>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const counts = await MessageRead.findAll({
+      where: {
+        userId: { [Op.in]: userIds },
+        status: {
+          [Op.in]: [ReadStatus.SENT, ReadStatus.DELIVERED],
+        },
+      },
+      include: [
+        {
+          model: Message,
+          as: 'message',
+          where: {
+            conversationId,
+            isDeleted: false,
+          },
+          attributes: [],
+        },
+      ],
+      attributes: ['userId'],
+      raw: true,
+    });
+
+    const result = new Map<number, number>();
+    userIds.forEach(id => result.set(id, 0));
+
+    for (const record of counts) {
+      const userId = (record as any).userId;
+      result.set(userId, (result.get(userId) || 0) + 1);
+    }
+
+    return result;
+  }
+
+  /**
    * Private helper: Get message with all relations
    */
   /**

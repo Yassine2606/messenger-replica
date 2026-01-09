@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { socketClient } from '@/lib/socket';
 
 interface UseTypingIndicatorProps {
@@ -6,14 +6,14 @@ interface UseTypingIndicatorProps {
 }
 
 export function useTypingIndicator({ conversationId }: UseTypingIndicatorProps) {
-  const [isTyping, setIsTyping] = useState(false);
+  const isTypingRef = useRef(false); // Use ref to avoid stale closure
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleTextChange = useCallback(
     (text: string) => {
-      // Send typing indicator
-      if (!isTyping && text.length > 0) {
-        setIsTyping(true);
+      // Send typing indicator only if not already typing
+      if (!isTypingRef.current && text.length > 0) {
+        isTypingRef.current = true;
         socketClient.startTyping(conversationId);
       }
 
@@ -24,12 +24,12 @@ export function useTypingIndicator({ conversationId }: UseTypingIndicatorProps) 
 
       // Stop typing after 500ms of inactivity
       typingTimeoutRef.current = setTimeout(() => {
-        setIsTyping(false);
+        isTypingRef.current = false;
         socketClient.stopTyping(conversationId);
       }, 500);
     },
-    [conversationId, isTyping]
+    [conversationId] // ✅ No isTyping dependency - eliminates closure stale issue
   );
 
-  return { handleTextChange, isTyping, typingTimeoutRef };
+  return { handleTextChange, typingTimeoutRef };
 }

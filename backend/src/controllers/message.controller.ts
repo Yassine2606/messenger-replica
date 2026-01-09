@@ -1,9 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { messageService } from '../services';
 import { getSocketManager } from '../socket';
-import { SocketMessagePayload } from '../types';
 
 export class MessageController {
+  /**
+   * Send message via REST endpoint
+   * Broadcasts via Socket.IO for real-time updates
+   */
   async sendMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
@@ -21,23 +24,13 @@ export class MessageController {
         replyToId,
       });
 
-      // Emit socket event to all participants in conversation
+      // Broadcast unified message event via Socket.IO
       try {
         const socketManager = getSocketManager();
-        const payload: SocketMessagePayload = {
-          message,
-          conversationId,
-        };
-        socketManager.emitToConversation(conversationId, 'message:new', payload);
-
-        // Auto-mark as delivered for online recipients (excluding sender)
-        // Don't await - let it run in background but it should complete before client refetches
-        socketManager.markMessageAsDeliveredForOnlineUsers(message.id, conversationId, userId).catch((err) => {
-          console.error('Failed to mark message as delivered:', err);
-        });
+        await socketManager.broadcastUnifiedMessage(conversationId, message.id, userId);
       } catch (socketError) {
-        // Don't fail the request if socket emit fails
-        console.error('Failed to emit socket event:', socketError);
+        console.warn('[MessageController] Warning: Failed to broadcast via socket:', socketError);
+        // Don't fail the request if socket broadcast fails - message is already saved
       }
 
       res.status(201).json(message);
@@ -64,80 +57,13 @@ export class MessageController {
     }
   }
 
-  async markConversationAsRead(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user!.userId;
-      const { conversationId } = req.params;
-
-      const messageIds = await messageService.markConversationAsRead(Number(conversationId), userId);
-      
-      // Emit socket events for each marked message
-      try {
-        const socketManager = getSocketManager();
-        for (const messageId of messageIds) {
-          socketManager.emitToConversation(Number(conversationId), 'message:status', {
-            messageId,
-            conversationId: Number(conversationId),
-            status: 'read',
-            userId,
-            readAt: new Date().toISOString(),
-          });
-        }
-      } catch (socketError) {
-        console.error('Failed to emit socket event:', socketError);
-      }
-
-      res.status(200).json({ success: true });
-    } catch (error) {
-      next(error);
-    }
-  }
-
   async deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
       const { messageId } = req.params;
 
       const message = await messageService.deleteMessage(Number(messageId), userId);
-
-      // Emit socket event to all participants in conversation
-      try {
-        const socketManager = getSocketManager();
-        socketManager.emitToConversation(message.conversationId, 'message:deleted', {
-          messageId: message.id,
-          conversationId: message.conversationId,
-          deletedAt: message.deletedAt,
-        });
-      } catch (socketError) {
-        // Don't fail the request if socket emit fails
-        console.error('Failed to emit socket event:', socketError);
-      }
-
-      res.status(200).json({ success: true });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async searchMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user!.userId;
-      const { conversationId } = req.params;
-      const { q, limit } = req.query;
-
-      if (!q) {
-        res.status(400).json({ error: 'Query parameter required' });
-        return;
-      }
-
-      const results = await messageService.searchMessages(
-        Number(conversationId),
-        userId,
-        String(q),
-        limit ? Number(limit) : 20
-      );
-
-      res.status(200).json(results);
+      res.status(200).json({ success: true, message });
     } catch (error) {
       next(error);
     }

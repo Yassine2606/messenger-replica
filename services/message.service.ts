@@ -45,13 +45,6 @@ export class MessageService {
   }
 
   /**
-   * Mark all messages in conversation as read
-   */
-  async markConversationAsRead(conversationId: number): Promise<void> {
-    await apiClient.post(`/messages/conversation/${conversationId}/read`);
-  }
-
-  /**
    * Mark a message as delivered
    */
   async markAsDelivered(messageId: number): Promise<void> {
