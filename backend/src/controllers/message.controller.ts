@@ -63,6 +63,16 @@ export class MessageController {
       const { messageId } = req.params;
 
       const message = await messageService.deleteMessage(Number(messageId), userId);
+
+      // Broadcast unified deletion event via Socket.IO
+      try {
+        const socketManager = getSocketManager();
+        socketManager.broadcastUnifiedMessageDeletion(message.conversationId, Number(messageId), userId);
+      } catch (socketError) {
+        console.warn('[MessageController] Warning: Failed to broadcast deletion via socket:', socketError);
+        // Don't fail the request if socket broadcast fails - message is already deleted
+      }
+
       res.status(200).json({ success: true, message });
     } catch (error) {
       next(error);

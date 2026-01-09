@@ -148,10 +148,10 @@ export function ChatInputFooter({
             placeholderTextColor="#9CA3AF"
             value={messageText}
             onChangeText={onChangeText}
-            editable={!sendingMessage}
+            onSubmitEditing={onSend}
             multiline
             maxLength={1000}
-            blurOnSubmit={false}
+            submitBehavior="submit"
             autoCapitalize="sentences"
             style={{
               minHeight: 40,

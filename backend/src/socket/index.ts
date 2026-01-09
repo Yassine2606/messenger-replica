@@ -3,7 +3,7 @@ import { Server, Socket } from 'socket.io';
 import { config } from '../config';
 import { messageService, conversationService, userService } from '../services';
 import { authService } from '../services/auth.service';
-import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, SocketUserStatusPayload, messageToDTO } from '../types';
+import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, UnifiedMessageDeletionEvent, SocketUserStatusPayload, messageToDTO } from '../types';
 import { AppError } from '../middleware';
 import { ReadStatus } from '../models/MessageRead';
 
@@ -81,6 +81,7 @@ export class SocketManager {
       socket.on('message:send', (data) => this.handleMessageSend(socket, userId, data));
       socket.on('message:read', (data) => this.handleMessageRead(socket, userId, data));
       socket.on('message:delivered', (data) => this.handleMessageDelivered(socket, userId, data));
+      socket.on('message:delete', (data) => this.handleMessageDelete(socket, userId, data));
       socket.on('conversation:join', (data) => this.handleConversationJoin(socket, userId, data));
       socket.on('conversation:leave', (data) => this.handleConversationLeave(socket, userId, data));
       socket.on('typing:start', (data) => this.handleTypingStart(socket, userId, data));
@@ -307,6 +308,53 @@ export class SocketManager {
       this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to mark message as delivered';
+      socket.emit('error', {
+        event: 'message:delivered',
+        message,
+      });
+    }
+  }
+
+  /**
+   * Handle message delete - UNIFIED EVENT
+   * Sends consolidated event when a message is deleted
+   */
+  private async handleMessageDelete(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+    try {
+      const { messageId, conversationId } = data;
+
+      if (!messageId) {
+        socket.emit('error', { event: 'message:delete', message: 'Message ID required' });
+        return;
+      }
+
+      if (!conversationId || typeof conversationId !== 'number') {
+        socket.emit('error', { event: 'message:delete', message: 'Valid conversation ID required' });
+        return;
+      }
+
+      // Get conversation with participants
+      const conversation = await conversationService.getConversation(conversationId, userId);
+      const participants = conversation.participants || [];
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+
+      // Get unread counts for all participants
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create unified deletion event
+      const unifiedEvent: UnifiedMessageDeletionEvent = {
+        conversationId,
+        deletedMessageIds: [messageId],
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
+      };
+
+      // Send single consolidated event to entire conversation
+      this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
+    } catch (error) {
+      const message = error instanceof AppError ? error.message : 'Failed to delete message';
       socket.emit('error', {
         event: 'message:delivered',
         message,
@@ -724,6 +772,38 @@ export class SocketManager {
       this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
     } catch (error) {
       console.error('[SocketManager] Failed to broadcast unified message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Broadcast unified message deletion event to conversation
+   * Called by REST API after message is deleted
+   */
+  async broadcastUnifiedMessageDeletion(conversationId: number, messageId: number, deleterId: number): Promise<void> {
+    try {
+      // Get conversation with participants
+      const conversation = await conversationService.getConversation(conversationId, deleterId);
+      const participants = conversation.participants || [];
+      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+
+      // Get unread counts for all participants
+      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+
+      // Create unified deletion event
+      const unifiedEvent: UnifiedMessageDeletionEvent = {
+        conversationId,
+        deletedMessageIds: [messageId],
+        conversationUpdates: participantIds.map(id => ({
+          userId: id,
+          unreadCount: unreadCounts.get(id) || 0,
+        })),
+      };
+
+      // Send single consolidated event to entire conversation
+      this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
+    } catch (error) {
+      console.error('[SocketManager] Failed to broadcast unified message deletion:', error);
       throw error;
     }
   }

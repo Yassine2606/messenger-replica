@@ -16,7 +16,7 @@ interface ScrollToBottomProps {
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 function ScrollToBottomComponent({ visible, onPress }: ScrollToBottomProps) {
-  const animatedValue = useDerivedValue(() => withTiming(visible ? 1 : 0, { duration: 100 }));
+  const animatedValue = useDerivedValue(() => withTiming(visible ? 1 : 0, { duration: 150 }));
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: interpolate(animatedValue.value, [0, 1], [60, 0]) }],

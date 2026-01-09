@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import { View, Pressable, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -26,27 +26,33 @@ interface VoiceMessagePlayerProps {
 
 /**
  * SVG Waveform Visualization - renders audio waveform as smooth lines
+ * Responsive to container width with dynamic bar spacing
  */
 const SvgWaveform = React.memo(
   ({
     waveform,
     waveColor,
     height = 36,
+    width = 100,
   }: {
     waveform: number[];
     waveColor: string;
     height?: number;
+    width?: number;
   }) => {
     if (!waveform || waveform.length === 0) {
+      // Dynamic placeholder based on width
+      const placeholderCount = Math.max(10, Math.floor(width / 8));
+      const barSpacing = width / (placeholderCount + 1);
+
       return (
-        <Svg width="100%" height={height}>
-          {/* Placeholder waveform */}
-          {Array.from({ length: 20 }).map((_, i) => (
+        <Svg width="100%" height={height} preserveAspectRatio="none">
+          {Array.from({ length: placeholderCount }).map((_, i) => (
             <Line
               key={`placeholder-${i}`}
-              x1={i * 7 + 2}
+              x1={(i + 1) * barSpacing}
               y1={height / 2}
-              x2={i * 7 + 2}
+              x2={(i + 1) * barSpacing}
               y2={height / 2 - 4}
               stroke={waveColor}
               strokeWidth="1.5"
@@ -57,16 +63,23 @@ const SvgWaveform = React.memo(
       );
     }
 
-    // Create SVG line paths for waveform
+    // Dynamic bar count based on available width (target 3-4px per bar including gap)
+    const barWidth = 2;
+    const barGap = 1;
+    const barWithGap = barWidth + barGap;
+    const dynamicBarCount = Math.max(8, Math.floor(width / barWithGap));
+    
+    // Use actual waveform data, slice to fit display
+    const displayWaveform = waveform.slice(0, dynamicBarCount);
     const centerY = height / 2;
-    const maxAmplitude = Math.max(...waveform, 0.1) || 0.1;
-    const barSpacing = 140 / Math.max(waveform.length, 20); // Fit to container width
+    const maxAmplitude = Math.max(...displayWaveform, 0.1) || 0.1;
+    const barSpacing = width / (displayWaveform.length + 1);
 
     return (
       <Svg width="100%" height={height} preserveAspectRatio="none">
-        {waveform.slice(0, 20).map((amplitude, i) => {
+        {displayWaveform.map((amplitude, i) => {
           const normalizedAmplitude = (amplitude / maxAmplitude) * (height / 2 - 2);
-          const x = i * barSpacing + barSpacing / 2;
+          const x = (i + 1) * barSpacing;
           return (
             <Line
               key={`wave-${i}`}
@@ -75,7 +88,7 @@ const SvgWaveform = React.memo(
               x2={x}
               y2={centerY - Math.max(2, normalizedAmplitude)}
               stroke={waveColor}
-              strokeWidth="2"
+              strokeWidth={barWidth}
               strokeLinecap="round"
             />
           );
@@ -107,7 +120,8 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
 
   // Shared values for smooth continuous animation
   const playbackProgress = useSharedValue(0);
-  const containerWidth = useSharedValue(140); // Waveform container width
+  const containerWidth = useSharedValue(140); // Waveform container width (updated on layout)
+  const [measuredWidth, setMeasuredWidth] = useState(140);
   const playbackStartTimeRef = useRef<number | null>(null);
 
   // Configure audio mode for iOS speaker playback
@@ -260,7 +274,9 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
         <Pressable
           onPress={handleWaveformPress}
           onLayout={(e) => {
-            containerWidth.value = e.nativeEvent.layout.width - 4; // Subtract padding
+            const width = e.nativeEvent.layout.width - 4; // Subtract padding
+            containerWidth.value = width;
+            setMeasuredWidth(width);
           }}
           style={{
             flex: 1,
@@ -274,7 +290,12 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
           }}
         >
           {/* SVG Waveform Visualization */}
-          <SvgWaveform waveform={waveform} waveColor={waveColor} height={36} />
+          <SvgWaveform 
+            waveform={waveform} 
+            waveColor={waveColor} 
+            height={36}
+            width={measuredWidth}
+          />
 
           {/* Playback Indicator */}
           <Animated.View

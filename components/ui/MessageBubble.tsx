@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
 import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
-import { ReplyIndicator } from './ReplyIndicator';
+import { ReplyIndicator } from './index';
 import { scheduleOnRN } from 'react-native-worklets';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '');
@@ -26,7 +26,7 @@ interface MessageBubbleProps {
   onReply?: (message: Message) => void;
   onShowMenu?: (coordinates: BubbleCoordinates | null) => void;
   onContextMenu?: (message: Message) => void;
-  onImagePress?: (imageUri: string) => void;
+  onImagePress?: (imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => void;
   onScrollToReply?: (message: Message) => void;
   // Shared animated values for synchronized timestamp drag across all messages of one side
   sharedRowTranslateX?: SharedValue<number>;
@@ -144,6 +144,7 @@ function MessageBubbleComponent({
   const replyIconOpacity = useSharedValue(0);
 
   const bubbleRef = useRef<View>(null);
+  const imageLayoutRef = useRef<View | null>(null);
 
   const { isGroupedWithPrevious, isGroupedWithNext, borderRadiusStyle } = useMemo(() => {
     const prev =
@@ -222,7 +223,7 @@ function MessageBubbleComponent({
 
   // GESTURE 3: Long press gesture for context menu (simultaneous with swipe)
   const longPressGesture = Gesture.LongPress()
-    .enabled(!message.isDeleted)
+    .enabled(!message.isDeleted && isOwn)
     .minDuration(300)
     .onStart(() => {
       runOnJS(triggerLongPress)();
@@ -292,14 +293,34 @@ function MessageBubbleComponent({
             <Animated.View style={bubbleAnimatedStyle}>
               <ReplyIndicator message={message} isOwn={isOwn} onPress={() => onScrollToReply?.(message)} />
               {message.type === 'image' && message.mediaUrl ? (
-                <Animated.View className="max-w-[280px] overflow-hidden rounded-2xl">
-                  <Pressable onPress={() => onImagePress?.(message.mediaUrl!)}>
-                    <Image
-                      source={{ uri: message.mediaUrl.startsWith('http') ? message.mediaUrl : `${API_BASE_URL}${message.mediaUrl}` }}
-                      style={{ width: 200, height: 200, borderRadius: 12 }}
-                      contentFit="cover"
-                    />
-                  </Pressable>
+                <>
+                  <Animated.View 
+                    ref={imageLayoutRef as any}
+                    className="max-w-[280px] overflow-hidden rounded-2xl"
+                    collapsable={false}
+                  >
+                    <Pressable
+                      onPress={() => {
+                        if (imageLayoutRef.current && 'measure' in imageLayoutRef.current) {
+                          (imageLayoutRef.current as any).measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
+                            onImagePress?.(message.mediaUrl!, {
+                              x: pageX,
+                              y: pageY,
+                              width,
+                              height,
+                            });
+                          });
+                        } else {
+                          onImagePress?.(message.mediaUrl!);
+                        }
+                      }}>
+                      <Image
+                        source={{ uri: message.mediaUrl.startsWith('http') ? message.mediaUrl : `${API_BASE_URL}${message.mediaUrl}` }}
+                        style={{ width: 120, height: 200 }}
+                        contentFit="contain"
+                      />
+                    </Pressable>
+                  </Animated.View>
                   {message.content && (
                     <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
                       <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
@@ -307,20 +328,18 @@ function MessageBubbleComponent({
                       </Text>
                     </View>
                   )}
-                </Animated.View>
-              ) : (
-                  <View
-                    className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
-                    style={borderRadiusStyle}>
-                    {message.type === 'text' && (
-                      <Text className={`text-base leading-6 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
-                        {message.content}
-                      </Text>
-                    )}
-                  </View>
-                )}
-              </Animated.View>
-            </GestureDetector>
+                </>
+              ) : message.type === 'text' ? (
+                <View
+                  className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
+                  style={borderRadiusStyle}>
+                  <Text className={`text-base leading-6 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                    {message.content}
+                  </Text>
+                </View>
+              ) : null}
+            </Animated.View>
+          </GestureDetector>
 
           {/* Timestamp - revealed on right when row is dragged left */}
           <Animated.View
@@ -362,6 +381,9 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
     messageEqual &&
     prevProps.isOwn === nextProps.isOwn &&
     prevProps.previousMessage?.id === nextProps.previousMessage?.id &&
-    prevProps.nextMessage?.id === nextProps.nextMessage?.id
+    prevProps.nextMessage?.id === nextProps.nextMessage?.id &&
+    prevProps.onImagePress === nextProps.onImagePress &&
+    prevProps.onReply === nextProps.onReply &&
+    prevProps.onContextMenu === nextProps.onContextMenu
   );
 });

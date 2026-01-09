@@ -1,11 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, TextInput, ActivityIndicator, Text, FlatList, Alert } from 'react-native';
+import { View, TextInput, ActivityIndicator, Text, FlatList, Alert, Platform } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSharedValue, useAnimatedStyle, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, AudioWavePlayer, VoiceMessagePlayer, MessageContextMenuModal } from '@/components/ui';
+import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, VoiceMessagePlayer, MessageContextMenuModal } from '@/components/ui';
 import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
 import { socketClient } from '@/lib/socket';
@@ -80,16 +80,25 @@ export default function ChatScreen() {
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUri, setImageViewerUri] = useState('');
+  const [imageSourceLayout, setImageSourceLayout] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | undefined>();
   const { isUserTyping } = useUserStore();
   const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
 
   // ============== Typing Indicator Hook ==============
   const { handleTextChange: handleTypingIndicator } = useTypingIndicator({ conversationId });
+  const sendMutation = useSendMessage(conversationId);
 
   const handleMessageTextChange = useCallback((text: string) => {
+    // Prevent changes while sending
+    if (sendMutation.isPending) return;
     setMessageText(text);
     handleTypingIndicator(text);
-  }, [handleTypingIndicator]);
+  }, [handleTypingIndicator, sendMutation.isPending]);
 
   // ============== Image Handlers Hook ==============
   const { handlePickImage, handleTakePhoto } = useImageHandlers({
@@ -111,16 +120,12 @@ export default function ChatScreen() {
   });
 
   // ============== Send Message Hook ==============
-  const sendMutation = useSendMessage(conversationId);
 
   const handleSend = useCallback(() => {
     const trimmedText = messageText.trim();
     if (!trimmedText) return;
-    
-    // Clear visual input immediately for UX feedback
-    inputRef.current?.setNativeProps({ text: '' });
 
-    // Send message with proper callbacks to handle state cleanup
+    // Send message immediately without clearing state first
     sendMutation.mutate({
       conversationId,
       type: MessageType.TEXT,
@@ -128,20 +133,16 @@ export default function ChatScreen() {
       replyToId: replyToMessage?.id,
     }, {
       onSuccess: () => {
-        // Only clear state on successful send
+        // Clear state AFTER successful send (optimistic update already in place)
         setMessageText('');
         setReplyToMessage(null);
       },
       onError: (error) => {
-        // Restore text on error so user can retry
         console.error('Failed to send message:', error);
-        inputRef.current?.setNativeProps({ text: trimmedText });
-        setMessageText(trimmedText);
+        // Text stays for retry
       },
     });
-    
-    inputRef.current?.focus();
-  }, [messageText, conversationId, replyToMessage, sendMutation]);
+  }, [messageText, replyToMessage, sendMutation]);
 
   const handleReply = useCallback((message: Message) => {
     setReplyToMessage(message);
@@ -151,9 +152,10 @@ export default function ChatScreen() {
     setReplyToMessage(null);
   }, []);
 
-  const handleImagePress = useCallback((imageUri: string) => {
+  const handleImagePress = useCallback((imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => {
     const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3000';
     setImageViewerUri(`${API_BASE_URL}${imageUri}`);
+    setImageSourceLayout(layout);
     setImageViewerVisible(true);
   }, []);
 
@@ -241,7 +243,7 @@ export default function ChatScreen() {
             onReply={handleReply}
             onShowMenu={() => {}}
             onContextMenu={handleMessageContextMenu}
-            onImagePress={handleImagePress}
+            onImagePress={item.type === MessageType.IMAGE ? handleImagePress : undefined}
             onScrollToReply={handleScrollToReply}
             sharedRowTranslateX={sharedRowTranslateX}
             sharedTimestampOpacity={sharedTimestampOpacity}
@@ -267,13 +269,13 @@ export default function ChatScreen() {
         </View>
       </ErrorBoundary>
     );
-  }, [combinedMessages, user?.id, handleReply, handleMessageContextMenu, sharedRowTranslateX, sharedTimestampOpacity]);
+  }, [combinedMessages, user?.id, handleReply, handleMessageContextMenu, handleImagePress, sharedRowTranslateX, sharedTimestampOpacity]);
 
   // ============== Loading State ==============
   if (messagesLoading) {
     return (
       <View className="flex-1 bg-white">
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#3B82F6" />
         </View>
@@ -297,7 +299,7 @@ export default function ChatScreen() {
   if (messagesError && !messages.length) {
     return (
       <View className="flex-1 bg-white">
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
         <View className="flex-1 items-center justify-center">
           <ErrorState
             error={messagesError as Error}
@@ -325,12 +327,12 @@ export default function ChatScreen() {
 
   // ============== Render ==============
   return (
-    <>
+    <KeyboardAvoidingView behavior={ Platform.OS === 'ios' ? 'padding' : 'height' } style={{ flex: 1 }}>
       <View className="flex-1 bg-white">
-        <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} />
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} />
+        <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} sourceLayout={imageSourceLayout} />
 
-      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0} style={{ flex: 1 }}>
+        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+
         <View ref={messageAreaRef} style={{ flex: 1, position: 'relative' }}>
           <FlatList
             ref={flatListRef}
@@ -339,7 +341,7 @@ export default function ChatScreen() {
             inverted
             onScroll={handleScroll}
             scrollEventThrottle={16}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="never"
             maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 10 }}
             onEndReached={() => {
               if (hasNextPage && !isFetchingNextPage) {
@@ -387,6 +389,16 @@ export default function ChatScreen() {
             pointerEvents="box-none">
             <ScrollToBottom visible={buttonVisible} onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false })} />
           </Animated.View>
+
+          {/* Message Context Menu Modal */}
+          <MessageContextMenuModal
+            visible={activeContextMessage !== null}
+            message={activeContextMessage}
+            currentUserId={user?.id}
+            onClose={closeContextMenu}
+            onDelete={handleDeleteMessage}
+            isDeleting={deleteMessageMutation.isPending}
+          />
         </View>
 
         {/* Typing Indicator - Only takes space when visible */}
@@ -416,18 +428,7 @@ export default function ChatScreen() {
           onTakePhoto={handleTakePhoto}
           onPickAudio={handleStartRecording}
         />
-      </KeyboardAvoidingView>
     </View>
-
-    {/* Message Context Menu Modal */}
-    <MessageContextMenuModal
-      visible={activeContextMessage !== null}
-      message={activeContextMessage}
-      currentUserId={user?.id}
-      onClose={closeContextMenu}
-      onDelete={handleDeleteMessage}
-      isDeleting={deleteMessageMutation.isPending}
-    />
-    </>
+    </KeyboardAvoidingView>
   );
 }

@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import type {
   UnifiedMessageEvent,
   UnifiedStatusUpdateEvent,
+  UnifiedMessageDeletionEvent,
   SocketPresencePayload,
   SocketUserStatusPayload,
   SocketTypingPayload,
@@ -206,6 +207,10 @@ class SocketClient {
       this.eventManager.emit('status:unified', payload);
     });
 
+    socket.on('message:deleted', (payload: UnifiedMessageDeletionEvent) => {
+      this.eventManager.emit('message:deleted', payload);
+    });
+
     socket.on('presence:joined', (payload: SocketPresencePayload) => {
       this.eventManager.emit('presence:joined', payload);
     });
@@ -273,6 +278,10 @@ class SocketClient {
 
   onStatusUnified(handler: (payload: UnifiedStatusUpdateEvent) => void): () => void {
     return this.subscribe('status:unified', handler);
+  }
+
+  onMessageDeleted(handler: (payload: UnifiedMessageDeletionEvent) => void): () => void {
+    return this.subscribe('message:deleted', handler);
   }
 
   onPresenceJoined(handler: (payload: SocketPresencePayload) => void): () => void {

@@ -38,6 +38,19 @@ export interface UnifiedStatusUpdateEvent {
 }
 
 /**
+ * Unified message deletion event - sent when messages are deleted
+ * Consolidates deletion updates with unread count changes
+ */
+export interface UnifiedMessageDeletionEvent {
+  conversationId: number;
+  deletedMessageIds: number[];
+  conversationUpdates: Array<{
+    userId: number;
+    unreadCount: number;
+  }>;
+}
+
+/**
  * Presence events - user joined/left conversation
  */
 export interface SocketPresencePayload {

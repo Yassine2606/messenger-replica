@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import { messageQueryKeys, conversationQueryKeys } from '@/lib/query-keys';
-import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, SocketTypingPayload, SocketUserStatusPayload } from '@/models';
+import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, UnifiedMessageDeletionEvent, SocketTypingPayload, SocketUserStatusPayload } from '@/models';
 import { useUserStore } from '@/stores';
 
 // Global reference for socket activity tracking (shared across all hook instances)
@@ -68,6 +68,31 @@ export function useSocketEventListener() {
         queryKey: conversationQueryKeys.list(),
       }).catch((error) => {
         console.error('[Socket] Failed to refetch conversations on status update:', error);
+      });
+    });
+
+    // Unified message deletion event - handles message deletions
+    const unsubscribeMessageDeleted = socketClient.onMessageDeleted((payload: UnifiedMessageDeletionEvent) => {
+      resetActivityTimer();
+      const { conversationId } = payload;
+      
+      // Invalidate messages to reflect deletion
+      queryClient.invalidateQueries({
+        queryKey: messageQueryKeys.byConversation(conversationId),
+        refetchType: 'all',
+      });
+      
+      // Invalidate conversations to update unread counts if deleted message was unread
+      queryClient.invalidateQueries({
+        queryKey: conversationQueryKeys.list(),
+        refetchType: 'all',
+      });
+
+      // Force refetch conversations immediately for real-time updates
+      queryClient.refetchQueries({
+        queryKey: conversationQueryKeys.list(),
+      }).catch((error) => {
+        console.error('[Socket] Failed to refetch conversations on message deletion:', error);
       });
     });
 
@@ -137,6 +162,7 @@ export function useSocketEventListener() {
       clearInterval(activityTimeoutInterval);
       unsubscribeMessageUnified();
       unsubscribeStatusUnified();
+      unsubscribeMessageDeleted();
       unsubscribePresenceJoined();
       unsubscribePresenceLeft();
       unsubscribeUserStatus();

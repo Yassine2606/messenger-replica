@@ -17,24 +17,26 @@ export function ReplyIndicator({ message, onPress }: ReplyIndicatorProps) {
   return (
     <Pressable onPress={onPress}>
       <View
-        className={`rounded-2xl px-3 pt-2 pb-8 bg-gray-200 max-w-[280px] w-full`}
+        className={`rounded-2xl px-3 pt-2 pb-8 bg-gray-200`}
         style={{ 
           opacity: 0.5,
           marginBottom: -16,
+          alignSelf: 'flex-start',
+          maxWidth: 220,
         }}>
-        <View className="flex-row items-center">
+        <View className="flex-row items-center gap-2">
           {message.replyTo.type === 'image' ? (
             <>
               <Ionicons name="image" size={14} color="#6B7280" />
-              <Text className="ml-2 text-xs text-gray-600">Photo</Text>
+              <Text className="text-xs text-gray-600 font-medium">Photo</Text>
             </>
           ) : message.replyTo.type === 'audio' ? (
             <>
               <Ionicons name="mic" size={14} color="#6B7280" />
-              <Text className="ml-2 text-xs text-gray-600">Audio</Text>
+              <Text className="text-xs text-gray-600 font-medium">Audio</Text>
             </>
           ) : (
-            <Text className="text-s text-gray-600" numberOfLines={1}>
+            <Text className="text-xs text-gray-700 flex-shrink" numberOfLines={1}>
               {message.replyTo.content || 'Message'}
             </Text>
           )}

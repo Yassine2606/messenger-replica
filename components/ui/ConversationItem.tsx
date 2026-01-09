@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Text, View } from 'react-native';
+import { Text, View, Image } from 'react-native';
 import type { Conversation } from '@/models';
 import { useUserPresence } from '@/hooks';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
@@ -59,18 +59,25 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
   const isOnline = statusText === 'Online';
 
   return (
-    <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-3 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
+    <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-4 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
       {/* Avatar */}
-      <View className="mr-3 relative justify-center">
-        <View className="h-12 w-12 items-center justify-center rounded-full bg-blue-500">
-          <Text className="text-lg font-semibold text-white">
-            {otherParticipant?.name?.charAt(0).toUpperCase() || '?'}
-          </Text>
-        </View>
+      <View className="mr-4 relative justify-center">
+        {otherParticipant?.avatarUrl ? (
+          <Image 
+            source={{ uri: otherParticipant.avatarUrl }} 
+            style={{ width: 64, height: 64, borderRadius: 32 }}
+          />
+        ) : (
+          <View className="h-16 w-16 items-center justify-center rounded-full bg-blue-500">
+            <Text className="text-2xl font-semibold text-white">
+              {otherParticipant?.name?.charAt(0).toUpperCase() || '?'}
+            </Text>
+          </View>
+        )}
         {shouldShowStatus && (
           <View className="absolute bottom-0 right-0 items-center justify-center">
             {statusText === 'Online' ? (
-              <View className="h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+              <View className="h-4 w-4 rounded-full border-2 border-white bg-green-500" />
             ) : (
                 <View className="rounded-full border border-gray-300 bg-white px-0.5 py-0.5">
                 <Text className="text-xs font-medium text-gray-600">
@@ -83,7 +90,7 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
       </View>
 
       {/* Content */}
-      <View className="flex-1">
+      <View className="flex-1 justify-center">
         {/* Header: Name + Time */}
         <View className="flex-row items-center justify-between">
           <Text className="text-base font-semibold text-gray-900 flex-1 pr-2" numberOfLines={1}>

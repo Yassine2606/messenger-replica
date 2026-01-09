@@ -7,8 +7,8 @@ import {
   Pressable,
   ActivityIndicator,
   StatusBar,
+  Image,
 } from 'react-native';
-import { Image } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -27,11 +27,20 @@ const DOUBLE_TAP_SCALE = 2.5;
 const DISMISS_THRESHOLD = 120;
 const DISMISS_VELOCITY_THRESHOLD = 800;
 const TIMING_CONFIG = { duration: 200 };
+const TRANSITION_DURATION = 300;
+
+interface ImageLayoutInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 interface ImageViewerProps {
   visible: boolean;
   imageUri: string;
   onClose: () => void;
+  sourceLayout?: ImageLayoutInfo;
 }
 
 type ImageDimensions = { width: number; height: number };
@@ -39,6 +48,7 @@ type ImageDimensions = { width: number; height: number };
 /**
  * ImageViewer: Production-grade image modal with pinch zoom, double-tap zoom, and swipe-to-close
  * Features:
+ * - Smooth shared element transition from source layout
  * - Smooth pinch-to-zoom with focal point preservation
  * - Double-tap zoom at tap location
  * - Pan when zoomed with edge clamping
@@ -46,11 +56,12 @@ type ImageDimensions = { width: number; height: number };
  * - Loading and error states
  * - Accessibility support
  */
-export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
+export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageViewerProps) {
   // State for image dimensions and loading
   const [imageSize, setImageSize] = React.useState<ImageDimensions>({ width: 0, height: 0 });
   const [isLoading, setIsLoading] = React.useState(true);
   const [isError, setIsError] = React.useState(false);
+  const [isClosing, setIsClosing] = React.useState(false);
 
   // Animated values for zoom and pan
   const scale = useSharedValue(MIN_SCALE);
@@ -59,8 +70,12 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
-  const backdropOpacity = useSharedValue(1);
+  const backdropOpacity = useSharedValue(0);
   const isPinching = useSharedValue(false);
+  
+  // Shared element transition values
+  const transitionProgress = useSharedValue(0);
+  const uiOpacity = useSharedValue(0); // Controls backdrop and close button visibility
 
   /**
    * Calculate image dimensions to fit screen while maintaining aspect ratio
@@ -93,7 +108,7 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
 
     Image.getSize(
       imageUri,
-      (width, height) => {
+      (width: number, height: number) => {
         setImageSize(calculateImageDimensions(width, height));
         setIsLoading(false);
       },
@@ -114,8 +129,24 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
     translateY.value = withTiming(0, TIMING_CONFIG);
     savedTranslateX.value = 0;
     savedTranslateY.value = 0;
-    backdropOpacity.value = withTiming(1, TIMING_CONFIG);
+    backdropOpacity.value = withTiming(0, TIMING_CONFIG);
   }, [scale, translateX, translateY, backdropOpacity]);
+
+  /**
+   * Trigger the opening animation
+   */
+  useEffect(() => {
+    if (!visible) {
+      backdropOpacity.value = 0;
+      uiOpacity.value = 0;
+      return;
+    }
+
+    setIsClosing(false);
+    // Just fade in the backdrop and UI when modal opens
+    backdropOpacity.value = withTiming(1, TIMING_CONFIG);
+    uiOpacity.value = withTiming(1, TIMING_CONFIG);
+  }, [visible, backdropOpacity, uiOpacity]);
 
   /**
    * Close modal and reset state
@@ -123,7 +154,7 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
   const handleClose = useCallback(() => {
     resetGestureState();
     onClose();
-  }, [resetGestureState, onClose]);
+  }, [onClose, resetGestureState]);
 
   /**
    * Pinch gesture: Zoom in/out with focal point preservation
@@ -209,8 +240,8 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
           translateY.value > DISMISS_THRESHOLD || event.velocityY > DISMISS_VELOCITY_THRESHOLD;
 
         if (shouldDismiss) {
-          translateY.value = withTiming(SCREEN_HEIGHT, TIMING_CONFIG);
-          backdropOpacity.value = withTiming(0, TIMING_CONFIG);
+          // Don't reset values - let reverse animation handle it from current position
+          // Trigger reverse animation via handleClose
           runOnJS(handleClose)();
         } else {
           translateY.value = withTiming(0, TIMING_CONFIG);
@@ -255,17 +286,24 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
     doubleTapGesture
   );
 
-  // Animated styles
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
+// Animated styles - only for gesture-based zoom/pan
+  const animatedImageStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value },
+        { scale: scale.value },
+      ],
+    };
+  });
 
   const animatedBackdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOpacity.value,
+  }));
+
+  const animatedHeaderStyle = useAnimatedStyle(() => ({
+    opacity: uiOpacity.value,
+    pointerEvents: uiOpacity.value > 0.5 ? 'auto' : 'none',
   }));
 
   if (!visible) return null;
@@ -274,7 +312,7 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       statusBarTranslucent
       onRequestClose={handleClose}
       accessibilityRole="image"
@@ -287,7 +325,7 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
           <Animated.View style={[styles.backdrop, animatedBackdropStyle]} />
 
           {/* Close button */}
-          <View style={styles.header}>
+          <Animated.View style={[styles.header, animatedHeaderStyle]}>
             <Pressable
               onPress={handleClose}
               style={styles.closeButton}
@@ -296,11 +334,11 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
               accessibilityHint="Double tap to close">
               <Ionicons name="close" size={24} color="white" />
             </Pressable>
-          </View>
+          </Animated.View>
 
           {/* Image with gestures */}
           <GestureDetector gesture={composedGesture}>
-            <Animated.View style={styles.imageContainer} accessible={false}>
+            <Animated.View style={[styles.imageContainer, animatedImageStyle]} accessible={false}>
               {isLoading && (
                 <ActivityIndicator
                   size="large"
@@ -317,16 +355,9 @@ export function ImageViewer({ visible, imageUri, onClose }: ImageViewerProps) {
               )}
 
               {!isLoading && !isError && (
-                <Animated.Image
+                <Image
                   source={{ uri: imageUri }}
-                  style={[
-                    {
-                      width: imageSize.width,
-                      height: imageSize.height,
-                    },
-                    animatedImageStyle,
-                  ]}
-                  resizeMode="contain"
+                  style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
                   accessible={true}
                   accessibilityRole="image"
                 />

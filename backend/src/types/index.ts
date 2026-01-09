@@ -105,6 +105,20 @@ export interface UnifiedStatusUpdateEvent {
 }
 
 /**
+ * Unified message deletion event - sent when messages are deleted
+ * Consolidates deletion updates with unread count changes
+ */
+export interface UnifiedMessageDeletionEvent {
+  conversationId: number;
+  deletedMessageIds: number[];
+  // Include updated unread counts for each user (deletion might affect unread counts)
+  conversationUpdates: Array<{
+    userId: number;
+    unreadCount: number;
+  }>;
+}
+
+/**
  * User online/offline status - only sent to users in shared conversations
  */
 export interface SocketUserStatusPayload {
