@@ -1,24 +1,70 @@
+# Dependencies
 node_modules/
+
+# Expo
 .expo/
+.expo-shared/
 dist/
+web-build/
+
+# Environment variables (SENSITIVE)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.*.production
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Debugging
 npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Certificates & Keys (SENSITIVE)
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
-*.orig.*
-web-build/
-# expo router
-expo-env.d.ts
+*.keystore
+*.pem
+*.crt
+*.cert
 
-.env
+# Native platforms
+ios/
+android/
 
-ios
-android
+# Logs
+*.log
+logs/
 
-# macOS
-.DS_Store
-
-# Temporary files created by Metro to check the health of the file watcher
+# Temporary
 .metro-health-check*
+*.orig.*
+
+# IDE generated
+expo-env.d.ts
