@@ -19,11 +19,17 @@ export function useImageHandlers({
   const uploadImageMutation = useUploadImage();
   const sendMutation = useSendMessage(conversationId);
 
-  const handlePickImage = useCallback(async () => {
-    const imageUri = await pickImageFromLibrary();
-    if (imageUri) {
+  const handlePickImage = useCallback(async (imageUri?: string) => {
+    // If URI is provided directly (from media picker), use it
+    // Otherwise, launch the image picker
+    let uri = imageUri;
+    if (!uri) {
+      uri = await pickImageFromLibrary();
+    }
+    
+    if (uri) {
       try {
-        const result = await uploadImageMutation.mutateAsync(imageUri);
+        const result = await uploadImageMutation.mutateAsync(uri);
 
         if (result.success) {
           sendMutation.mutate({

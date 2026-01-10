@@ -193,7 +193,7 @@ class SocketClient {
       if (socket.connected) {
         socket.emit('ping');
       }
-    }, 25000); // Every 25 seconds
+    }, 20000); // Every 20 seconds - aggressive to maintain connection
 
     socket.once('disconnect', () => {
       clearInterval(heartbeatInterval);

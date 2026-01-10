@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Message } from '@/models';
@@ -27,6 +27,7 @@ interface ChatInputFooterProps {
  * - Proper safe area handling
  * - Disabled states while sending/uploading
  * - Full accessibility support
+ * - Chevron icon when composer is expanded
  */
 export function ChatInputFooter({
   messageText,
@@ -41,8 +42,10 @@ export function ChatInputFooter({
   onPickAudio,
 }: ChatInputFooterProps) {
   const insets = useSafeAreaInsets();
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const hasText = messageText.trim().length > 0;
   const canSend = hasText && !sendingMessage;
+  const showExpandedUI = hasText && isComposerExpanded;
 
   return (
     <View
@@ -88,23 +91,39 @@ export function ChatInputFooter({
 
       {/* Input controls */}
       <View className="flex-row items-center px-3 gap-2">
-        {/* Camera button */}
-        <Pressable
-          className="h-10 w-10 items-center justify-center rounded-full active:bg-gray-100"
-          onPress={onTakePhoto}
-          disabled={sendingMessage}
-          accessibilityRole="button"
-          accessibilityLabel="Take photo"
-          accessibilityHint="Opens camera to take a photo">
-          <Ionicons
-            name="camera-outline"
-            size={24}
-            color={sendingMessage ? '#D1D5DB' : '#3B82F6'}
-          />
-        </Pressable>
+        {/* Camera button or Collapse chevron */}
+        {!showExpandedUI ? (
+          <Pressable
+            className="h-10 w-10 items-center justify-center rounded-full active:bg-gray-100"
+            onPress={onTakePhoto}
+            disabled={sendingMessage}
+            accessibilityRole="button"
+            accessibilityLabel="Take photo"
+            accessibilityHint="Opens camera to take a photo">
+            <Ionicons
+              name="camera-outline"
+              size={24}
+              color={sendingMessage ? '#D1D5DB' : '#3B82F6'}
+            />
+          </Pressable>
+        ) : (
+          <Pressable
+            className="h-10 w-10 items-center justify-center rounded-full active:bg-gray-100"
+            onPress={() => setIsComposerExpanded(false)}
+            disabled={sendingMessage}
+            accessibilityRole="button"
+            accessibilityLabel="Collapse composer"
+            accessibilityHint="Collapse the message composer">
+            <Ionicons
+              name="chevron-forward"
+              size={24}
+              color={sendingMessage ? '#D1D5DB' : '#3B82F6'}
+            />
+          </Pressable>
+        )}
 
         {/* Gallery & Microphone buttons */}
-        {!hasText && (
+        {!showExpandedUI && (
           <View
             style={{
               flexDirection: 'row',
@@ -147,7 +166,12 @@ export function ChatInputFooter({
             placeholder="Message..."
             placeholderTextColor="#9CA3AF"
             value={messageText}
-            onChangeText={onChangeText}
+            onChangeText={(text) => {
+              onChangeText(text);
+              if (text.trim().length > 0) {
+                setIsComposerExpanded(true);
+              }
+            }}
             onSubmitEditing={onSend}
             multiline
             maxLength={1000}
@@ -163,35 +187,27 @@ export function ChatInputFooter({
           />
         </View>
 
-        {/* Send or Like button */}
-        {hasText ? (
-          <Pressable
-            className="h-10 w-10 items-center justify-center rounded-full active:bg-blue-100"
-            onPress={onSend}
-            disabled={!canSend}
-            accessibilityRole="button"
-            accessibilityLabel={sendingMessage ? 'Sending message' : 'Send message'}
-            accessibilityHint="Double tap to send message">
-            <Ionicons
-              name={sendingMessage ? 'hourglass-outline' : 'send'}
-              size={20}
-              color={canSend ? '#3B82F6' : '#D1D5DB'}
-            />
-          </Pressable>
-        ) : (
-          <Pressable
-            className="h-10 w-10 items-center justify-center rounded-full active:bg-red-100"
-            onPress={() => {}}
-            disabled={sendingMessage}
-            accessibilityRole="button"
-            accessibilityLabel="Send like">
-            <Ionicons
-              name="heart-outline"
-              size={24}
-              color={sendingMessage ? '#D1D5DB' : '#EF4444'}
-            />
-          </Pressable>
-        )}
+        {/* Send button */}
+        <Pressable
+          className={`h-10 px-3 items-center justify-center rounded-full ${
+            canSend ? 'active:bg-blue-100' : ''
+          }`}
+          onPress={onSend}
+          disabled={!canSend}
+          accessibilityRole="button"
+          accessibilityLabel={sendingMessage ? 'Sending message' : 'Send message'}
+          accessibilityHint="Double tap to send message">
+          {sendingMessage ? (
+            <ActivityIndicator size="small" color="#3B82F6" />
+          ) : (
+            <Text
+              className={`text-sm font-semibold ${
+                canSend ? 'text-blue-500' : 'text-gray-300'
+              }`}>
+              Send
+            </Text>
+          )}
+        </Pressable>
       </View>
     </View>
   );

@@ -67,3 +67,58 @@ export function shouldShowOnlineIndicator(isoTimestamp?: string | Date): boolean
   const result = formatTimeAgo(isoTimestamp);
   return result !== null;
 }
+/**
+ * Get human-readable date label for message separator
+ * Uses Messenger/Instagram style formatting:
+ * - Today: "Today"
+ * - Yesterday: "Yesterday"
+ * - This week: Day name (e.g., "Monday")
+ * - This year: "Jan 15"
+ * - Other years: "Jan 15, 2025"
+ *
+ * @param date - ISO timestamp string or Date object
+ * @returns Formatted date label string
+ */
+export function getDateLabel(date: Date | string): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+
+  // Get start of day for comparison (00:00:00)
+  const dateStart = new Date(dateObj);
+  dateStart.setHours(0, 0, 0, 0);
+
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.floor((todayStart.getTime() - dateStart.getTime()) / 86400000);
+
+  // Today
+  if (diffDays === 0) {
+    return 'Today';
+  }
+
+  // Yesterday
+  if (diffDays === 1) {
+    return 'Yesterday';
+  }
+
+  // Within the last 6 days (this week)
+  if (diffDays > 0 && diffDays <= 6) {
+    return dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+  }
+
+  // This year
+  if (dateObj.getFullYear() === now.getFullYear()) {
+    return dateObj.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  // Different year
+  return dateObj.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}

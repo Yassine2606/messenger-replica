@@ -1,10 +1,10 @@
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfile, useLogout, useUpdateProfile } from '@/hooks';
-import { CustomModal, FormField, Button, ProfileCard, AvatarUploader } from '@/components/ui';
+import { CustomModal, FormField, Button, ProfileCard, AvatarUploader, UserAvatar } from '@/components/ui';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -119,21 +119,9 @@ export default function ProfileScreen() {
 
           {/* Avatar Section */}
           <View className="mb-8 items-center">
-            {user.avatarUrl ? (
-              <View className="mb-4 items-center justify-center rounded-full shadow-lg overflow-hidden" style={{ width: 96, height: 96 }}>
-                <Image 
-                  source={{ uri: user.avatarUrl }} 
-                  style={{ width: 96, height: 96, borderRadius: 48 }}
-                  resizeMode="cover"
-                />
-              </View>
-            ) : (
-              <View className="mb-4 h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-blue-600 shadow-lg">
-                <Text className="text-5xl font-bold text-white">
-                  {user.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
+            <View className="mb-4 shadow-lg">
+              <UserAvatar avatarUrl={user.avatarUrl} userName={user.name} size="lg" />
+            </View>
             <Text className="text-xl font-semibold text-gray-900">{user.name}</Text>
           </View>
 

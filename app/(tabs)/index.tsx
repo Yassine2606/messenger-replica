@@ -1,18 +1,37 @@
-import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import React, { useCallback, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator, RefreshControl, FlatList } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useGetConversations, useProfile } from '@/hooks';
+import { useGetConversations, useProfile, useUserPresence } from '@/hooks';
 import { ConversationItem, ErrorState } from '@/components/ui';
 import type { Conversation } from '@/models';
+import { useUserStore } from '@/stores';
+import { socketClient } from '@/lib/socket';
+import { conversationQueryKeys } from '@/lib/query-keys';
 
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const { data: user } = useProfile();
   const { data: conversations = [], isLoading, error, refetch } = useGetConversations();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const queryClient = useQueryClient();
+  
+  // Get all user presence data from store for real-time updates
+  const userPresence = useUserStore((state) => state.userPresence);
+  
+  // Listen for unified message events to invalidate conversations list
+  useEffect(() => {
+    const unsubscribe = socketClient.onMessageUnified(() => {
+      // Invalidate conversations list to trigger refetch on any message change
+      queryClient.invalidateQueries({ queryKey: conversationQueryKeys.list() });
+    });
+    
+    return () => {
+      unsubscribe?.();
+    };
+  }, [queryClient]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -42,11 +61,22 @@ export default function ChatsScreen() {
     });
   };
 
-  const renderItem = ({ item }: { item: Conversation }) => (
-    <TouchableOpacity activeOpacity={0.7} onPress={() => handleConversationPress(item.id)}>
-      <ConversationItem conversation={item} currentUserId={user?.id} />
-    </TouchableOpacity>
-  );
+  const renderItem = ({ item }: { item: Conversation }) => {
+    const otherParticipant = item.participants?.find((p) => p.id !== user?.id);
+    const realtimeLastSeen = otherParticipant 
+      ? userPresence.get(otherParticipant.id)?.lastSeen || otherParticipant.lastSeen
+      : undefined;
+    
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={() => handleConversationPress(item.id)}>
+        <ConversationItem 
+          conversation={item} 
+          currentUserId={user?.id}
+          otherUserLastSeen={realtimeLastSeen}
+        />
+      </TouchableOpacity>
+    );
+  };
 
   const keyExtractor = (item: Conversation) => `conv-${item.id}`;
 
@@ -122,7 +152,7 @@ export default function ChatsScreen() {
         </View>
       )}
 
-      <FlashList
+      <FlatList
         data={filteredConversations}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
@@ -134,6 +164,10 @@ export default function ChatsScreen() {
             tintColor="#3B82F6"
           />
         }
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={15}
+        removeClippedSubviews={true}
       />
 
       <TouchableOpacity

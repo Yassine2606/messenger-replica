@@ -9,7 +9,7 @@ interface ReplyIndicatorProps {
   onPress?: () => void;
 }
 
-export function ReplyIndicator({ message, onPress }: ReplyIndicatorProps) {
+export function ReplyIndicator({ message, isOwn, onPress }: ReplyIndicatorProps) {
   if (!message.replyTo || message.replyTo.isDeleted) {
     return null;
   }
@@ -21,7 +21,7 @@ export function ReplyIndicator({ message, onPress }: ReplyIndicatorProps) {
         style={{ 
           opacity: 0.5,
           marginBottom: -16,
-          alignSelf: 'flex-start',
+          alignSelf: isOwn ? 'flex-end' : 'flex-start',
           maxWidth: 220,
         }}>
         <View className="flex-row items-center gap-2">

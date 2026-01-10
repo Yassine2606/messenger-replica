@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, ReactNode } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import { useAuthStore } from '@/stores';
 import { useAuth } from './AuthProvider';
@@ -17,6 +18,7 @@ interface SocketProviderProps {
 export function SocketProvider({ children }: SocketProviderProps) {
   const token = useAuthStore((state) => state.token);
   const { isHydrated } = useAuth();
+  const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = React.useState(false);
 
   // Handle token change - connect or disconnect
@@ -39,6 +41,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
     // Listen for connection state changes
     const unsubscribeConnect = socketClient.subscribe('connected', () => {
       setIsConnected(true);
+      // Invalidate all queries on reconnect to ensure fresh data
+      queryClient.invalidateQueries();
     });
 
     const unsubscribeDisconnect = socketClient.subscribe('disconnected', () => {
@@ -64,7 +68,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
 
     const presencePingInterval = setInterval(() => {
       socketClient.sendPresencePing();
-    }, 30000); // Send presence ping every 30 seconds
+    }, 15000); // Send presence ping every 15 seconds - aggressive to keep online status fresh
 
     return () => {
       clearInterval(presencePingInterval);

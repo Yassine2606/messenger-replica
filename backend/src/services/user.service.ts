@@ -58,12 +58,10 @@ export class UserService {
 
   /**
    * Update user status (online/offline)
+   * Always updates lastSeen to keep real-time presence accurate
    */
   async updateUserStatus(userId: number, status: 'online' | 'offline'): Promise<void> {
-    const updateData: any = { status };
-    if (status === 'offline') {
-      updateData.lastSeen = new Date();
-    }
+    const updateData: any = { status, lastSeen: new Date() };
 
     await User.update(updateData, {
       where: { id: userId },

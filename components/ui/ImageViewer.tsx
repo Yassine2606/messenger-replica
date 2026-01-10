@@ -7,8 +7,8 @@ import {
   Pressable,
   ActivityIndicator,
   StatusBar,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -27,7 +27,6 @@ const DOUBLE_TAP_SCALE = 2.5;
 const DISMISS_THRESHOLD = 120;
 const DISMISS_VELOCITY_THRESHOLD = 800;
 const TIMING_CONFIG = { duration: 200 };
-const TRANSITION_DURATION = 300;
 
 interface ImageLayoutInfo {
   x: number;
@@ -41,6 +40,7 @@ interface ImageViewerProps {
   imageUri: string;
   onClose: () => void;
   sourceLayout?: ImageLayoutInfo;
+  imageDimensions?: { width: number; height: number }; // Pre-calculated dimensions to skip Image.getSize()
 }
 
 type ImageDimensions = { width: number; height: number };
@@ -56,10 +56,10 @@ type ImageDimensions = { width: number; height: number };
  * - Loading and error states
  * - Accessibility support
  */
-export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageViewerProps) {
+export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDimensions }: ImageViewerProps) {
   // State for image dimensions and loading
-  const [imageSize, setImageSize] = React.useState<ImageDimensions>({ width: 0, height: 0 });
-  const [isLoading, setIsLoading] = React.useState(true);
+  const [imageSize, setImageSize] = React.useState<ImageDimensions>(imageDimensions || { width: 0, height: 0 });
+  const [isLoading, setIsLoading] = React.useState(!imageDimensions); // Only load if dimensions not provided
   const [isError, setIsError] = React.useState(false);
   const [isClosing, setIsClosing] = React.useState(false);
 
@@ -74,7 +74,6 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageV
   const isPinching = useSharedValue(false);
   
   // Shared element transition values
-  const transitionProgress = useSharedValue(0);
   const uiOpacity = useSharedValue(0); // Controls backdrop and close button visibility
 
   /**
@@ -99,25 +98,23 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageV
 
   /**
    * Load image dimensions on mount or when URI changes
+   * Skips dimension fetching if imageDimensions are already provided (optimization for cached images)
+   * Uses onLoad event from expo-image for accurate dimensions
    */
   useEffect(() => {
     if (!visible || !imageUri) return;
 
+    // If dimensions already provided, skip fetching
+    if (imageDimensions) {
+      setImageSize(calculateImageDimensions(imageDimensions.width, imageDimensions.height));
+      setIsLoading(false);
+      setIsError(false);
+      return;
+    }
+
     setIsLoading(true);
     setIsError(false);
-
-    Image.getSize(
-      imageUri,
-      (width: number, height: number) => {
-        setImageSize(calculateImageDimensions(width, height));
-        setIsLoading(false);
-      },
-      () => {
-        setIsError(true);
-        setIsLoading(false);
-      }
-    );
-  }, [visible, imageUri, calculateImageDimensions]);
+  }, [visible, imageUri, imageDimensions, calculateImageDimensions]);
 
   /**
    * Reset all gesture state values
@@ -133,7 +130,7 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageV
   }, [scale, translateX, translateY, backdropOpacity]);
 
   /**
-   * Trigger the opening animation
+   * Trigger the opening animation and reset on fresh open
    */
   useEffect(() => {
     if (!visible) {
@@ -143,18 +140,20 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageV
     }
 
     setIsClosing(false);
-    // Just fade in the backdrop and UI when modal opens
+    // Reset gesture state when opening fresh
+    resetGestureState();
+    // Fade in the backdrop and UI when modal opens
     backdropOpacity.value = withTiming(1, TIMING_CONFIG);
     uiOpacity.value = withTiming(1, TIMING_CONFIG);
-  }, [visible, backdropOpacity, uiOpacity]);
+  }, [visible, backdropOpacity, uiOpacity, resetGestureState]);
 
   /**
-   * Close modal and reset state
+   * Close modal - don't reset gesture state, let it happen after modal closes
    */
   const handleClose = useCallback(() => {
-    resetGestureState();
+    setIsClosing(true);
     onClose();
-  }, [onClose, resetGestureState]);
+  }, [onClose]);
 
   /**
    * Pinch gesture: Zoom in/out with focal point preservation
@@ -357,7 +356,19 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout }: ImageV
               {!isLoading && !isError && (
                 <Image
                   source={{ uri: imageUri }}
-                  style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
+                  style={{ width: '100%', height: '100%' }}
+                  contentFit="contain"
+                  onLoad={(result) => {
+                    // Get dimensions from onLoad event if not already provided
+                    if (!imageDimensions && result.source.width && result.source.height) {
+                      setImageSize(calculateImageDimensions(result.source.width, result.source.height));
+                    }
+                    setIsLoading(false);
+                  }}
+                  onError={() => {
+                    setIsError(true);
+                    setIsLoading(false);
+                  }}
                   accessible={true}
                   accessibilityRole="image"
                 />

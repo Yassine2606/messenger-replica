@@ -13,7 +13,7 @@ export function useGetConversations(enabled = true): UseQueryResult<Conversation
       return conversationService.getConversations();
     },
     enabled,
-    staleTime: Infinity, // Invalidate via socket events only
+    staleTime: 0, // Always consider stale so invalidateQueries triggers refetch
     gcTime: 5 * 60 * 1000, // 5 minutes
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
@@ -34,7 +34,7 @@ export function useGetConversation(
       return conversationService.getConversation(conversationId);
     },
     enabled: enabled && !!conversationId,
-    staleTime: Infinity, // Invalidate via socket events only
+    staleTime: 0, // Always consider stale so invalidateQueries triggers refetch
     gcTime: 5 * 60 * 1000, // 5 minutes
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),

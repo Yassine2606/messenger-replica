@@ -25,72 +25,113 @@ interface VoiceMessagePlayerProps {
 }
 
 /**
- * SVG Waveform Visualization - renders audio waveform as smooth lines
+ * SVG Waveform Visualization - renders audio waveform with symmetric top/bottom bars
+ * Messenger-style: Clean, minimal bars that go both up and down from center
  * Responsive to container width with dynamic bar spacing
+ * Color changes based on playback progress position
  */
 const SvgWaveform = React.memo(
   ({
     waveform,
     waveColor,
+    playedColor,
+    progress,
     height = 36,
     width = 100,
   }: {
     waveform: number[];
     waveColor: string;
+    playedColor: string;
+    progress: number;
     height?: number;
     width?: number;
   }) => {
     if (!waveform || waveform.length === 0) {
-      // Dynamic placeholder based on width
-      const placeholderCount = Math.max(10, Math.floor(width / 8));
+      // Dynamic placeholder based on width - more compact bars
+      const placeholderCount = Math.max(8, Math.floor(width / 8));
       const barSpacing = width / (placeholderCount + 1);
 
       return (
         <Svg width="100%" height={height} preserveAspectRatio="none">
-          {Array.from({ length: placeholderCount }).map((_, i) => (
-            <Line
-              key={`placeholder-${i}`}
-              x1={(i + 1) * barSpacing}
-              y1={height / 2}
-              x2={(i + 1) * barSpacing}
-              y2={height / 2 - 4}
-              stroke={waveColor}
-              strokeWidth="1.5"
-              opacity="0.4"
-            />
-          ))}
+          {Array.from({ length: placeholderCount }).map((_, i) => {
+            const barPosition = (i + 1) / (placeholderCount + 1);
+            const barColor = barPosition <= progress ? playedColor : waveColor;
+            
+            return (
+              <React.Fragment key={`placeholder-${i}`}>
+                {/* Top bar */}
+                <Line
+                  x1={(i + 1) * barSpacing}
+                  y1={height / 2}
+                  x2={(i + 1) * barSpacing}
+                  y2={height / 2 - 3}
+                  stroke={barColor}
+                  strokeWidth="1.5"
+                  opacity="0.3"
+                  strokeLinecap="round"
+                />
+                {/* Bottom bar - mirror of top */}
+                <Line
+                  x1={(i + 1) * barSpacing}
+                  y1={height / 2}
+                  x2={(i + 1) * barSpacing}
+                  y2={height / 2 + 3}
+                  stroke={barColor}
+                  strokeWidth="1.5"
+                  opacity="0.3"
+                  strokeLinecap="round"
+                />
+              </React.Fragment>
+            );
+          })}
         </Svg>
       );
     }
 
-    // Dynamic bar count based on available width (target 3-4px per bar including gap)
-    const barWidth = 2;
-    const barGap = 1;
+    // Dynamic bar count - more compact (target 3px total per bar)
+    const barWidth = 3;
+    const barGap = 1.5;
     const barWithGap = barWidth + barGap;
     const dynamicBarCount = Math.max(8, Math.floor(width / barWithGap));
     
-    // Use actual waveform data, slice to fit display
-    const displayWaveform = waveform.slice(0, dynamicBarCount);
+    // Sample waveform data - reduce to dynamicBarCount for cleaner visualization
+    const sampleWaveform = waveform.slice(0, dynamicBarCount);
     const centerY = height / 2;
-    const maxAmplitude = Math.max(...displayWaveform, 0.1) || 0.1;
-    const barSpacing = width / (displayWaveform.length + 1);
+    const maxAmplitude = Math.max(...sampleWaveform, 0.1) || 0.1;
+    const barSpacing = width / (sampleWaveform.length + 1);
 
     return (
       <Svg width="100%" height={height} preserveAspectRatio="none">
-        {displayWaveform.map((amplitude, i) => {
+        {sampleWaveform.map((amplitude, i) => {
+          const barPosition = (i + 1) / (sampleWaveform.length + 1);
+          const barColor = barPosition <= progress ? playedColor : waveColor;
           const normalizedAmplitude = (amplitude / maxAmplitude) * (height / 2 - 2);
           const x = (i + 1) * barSpacing;
+          const barHeight = Math.max(2, normalizedAmplitude);
+          
           return (
-            <Line
-              key={`wave-${i}`}
-              x1={x}
-              y1={centerY}
-              x2={x}
-              y2={centerY - Math.max(2, normalizedAmplitude)}
-              stroke={waveColor}
-              strokeWidth={barWidth}
-              strokeLinecap="round"
-            />
+            <React.Fragment key={`wave-${i}`}>
+              {/* Top bar */}
+              <Line
+                x1={x}
+                y1={centerY - 1}
+                x2={x}
+                y2={centerY - 1 - barHeight}
+                stroke={barColor}
+                strokeWidth={barWidth}
+                strokeLinecap="round"
+              />
+              {/* Bottom bar - mirror of top for symmetric visualization */}
+              <Line
+                x1={x}
+                y1={centerY + 1}
+                x2={x}
+                y2={centerY + 1 + barHeight}
+                stroke={barColor}
+                strokeWidth={barWidth}
+                strokeLinecap="round"
+              />
+            </React.Fragment>
           );
         })}
       </Svg>
@@ -120,9 +161,12 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
 
   // Shared values for smooth continuous animation
   const playbackProgress = useSharedValue(0);
-  const containerWidth = useSharedValue(140); // Waveform container width (updated on layout)
-  const [measuredWidth, setMeasuredWidth] = useState(140);
-  const playbackStartTimeRef = useRef<number | null>(null);
+  const containerWidth = useSharedValue(200); // Waveform container width (updated on layout)
+  const hasStartedPlayingShared = useSharedValue(0); // 0 = false, 1 = true (shared value for animation)
+  const [measuredWidth, setMeasuredWidth] = useState(200);
+  const playbackStartTimeRef = useRef<number | null>(null); // Timestamp when playback started
+  const playbackStartPositionRef = useRef<number>(0); // Audio position when playback started
+  const lastDurationRef = useRef<number>(0); // Cache duration to detect changes
 
   // Configure audio mode for iOS speaker playback
   useEffect(() => {
@@ -134,48 +178,73 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
     });
   }, []);
 
-  // Detect play state changes and animate progress
-  useAnimatedReaction(
-    () => status.playing,
-    (isPlaying) => {
-      if (isPlaying && status.isLoaded && status.duration > 0) {
-        const currentProgress = status.currentTime / status.duration;
-        const remainingTime = Math.max(0, (1 - currentProgress) * status.duration * 1000);
-
-        playbackProgress.value = withTiming(1, {
-          duration: remainingTime,
-          easing: Easing.linear,
-        });
-      }
-    }
-  );
-
-  // Update progress on seek or pause
+  // Detect play state changes and update progress
   useEffect(() => {
     if (!status.isLoaded || status.duration === 0) return;
 
-    const currentProgress = status.currentTime / status.duration;
-    if (!status.playing) {
+    if (status.playing) {
+      // Start playing - capture start position
+      playbackStartTimeRef.current = Date.now();
+      playbackStartPositionRef.current = status.currentTime;
+      hasStartedPlayingShared.value = 1; // Mark as started
+    } else {
+      // Paused - sync to actual position
+      playbackStartTimeRef.current = null;
+      const currentProgress = Math.min(1, Math.max(0, status.currentTime / status.duration));
       playbackProgress.value = currentProgress;
     }
-  }, [status.currentTime, status.playing, status.isLoaded, status.duration, playbackProgress]);
+  }, [status.playing, status.isLoaded, status.duration, playbackProgress, hasStartedPlayingShared]);
+
+  // Continuously update progress during playback using timestamp-based sync
+  useEffect(() => {
+    if (!status.playing || !playbackStartTimeRef.current || status.duration === 0) return;
+
+    const updateProgress = () => {
+      if (!playbackStartTimeRef.current) return;
+
+      const elapsedMs = Date.now() - playbackStartTimeRef.current;
+      const expectedPosition = playbackStartPositionRef.current + (elapsedMs / 1000);
+      const expectedProgress = Math.min(1, Math.max(0, expectedPosition / status.duration));
+
+      playbackProgress.value = expectedProgress;
+    };
+
+    const interval = setInterval(updateProgress, 50);
+    return () => clearInterval(interval);
+  }, [status.playing, status.duration, playbackProgress]);
 
   // Reset when audio finishes
   useEffect(() => {
-    if (status.didJustFinish) {
-      player.pause();
-      player.seekTo(0);
-      playbackProgress.value = 0;
+    if (status.didJustFinish && player && status.isLoaded) {
+      // Ensure progress is at exactly 1.0 before resetting
+      playbackProgress.value = withTiming(1, { duration: 0 });
+      setTimeout(() => {
+        try {
+          player.pause();
+          player.seekTo(0);
+        } catch (error) {
+          console.warn('Error resetting audio:', error);
+        }
+        playbackProgress.value = 0;
+        hasStartedPlayingShared.value = 0; // Reset started flag
+        playbackStartTimeRef.current = null;
+        playbackStartPositionRef.current = 0;
+      }, 50);
     }
-  }, [status.didJustFinish, player, playbackProgress]);
+  }, [status.didJustFinish, status.isLoaded, player, playbackProgress, hasStartedPlayingShared]);
 
   const handlePlayPause = useCallback(() => {
-    if (status.playing) {
-      player.pause();
-    } else {
-      player.play();
+    if (!player || !status.isLoaded) return;
+    try {
+      if (status.playing) {
+        player.pause();
+      } else {
+        player.play();
+      }
+    } catch (error) {
+      console.warn('Audio playback error:', error);
     }
-  }, [status.playing, player]);
+  }, [status.playing, status.isLoaded, player]);
 
   const handleLongPress = useCallback(() => {
     if (!message) return;
@@ -195,15 +264,19 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
 
   const handleWaveformPress = useCallback(
     (event: any) => {
-      if (!duration || !status.isLoaded) return;
+      if (!duration || !status.isLoaded || !player) return;
 
-      const { locationX } = event.nativeEvent;
-      const currentContainerWidth = containerWidth.value;
-      const progress = Math.max(0, Math.min(1, locationX / currentContainerWidth));
-      const seekTime = progress * (duration / 1000);
+      try {
+        const { locationX } = event.nativeEvent;
+        const currentContainerWidth = containerWidth.value;
+        const progress = Math.max(0, Math.min(1, locationX / currentContainerWidth));
+        const seekTime = progress * (duration / 1000);
 
-      playbackProgress.value = progress;
-      player.seekTo(seekTime);
+        playbackProgress.value = progress;
+        player.seekTo(seekTime);
+      } catch (error) {
+        console.warn('Error seeking audio:', error);
+      }
     },
     [duration, player, playbackProgress, status.isLoaded, containerWidth]
   );
@@ -217,7 +290,8 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   // Memoized computed values
   const durationSeconds = useMemo(() => duration / 1000, [duration]);
   const bgColor = useMemo(() => (isOwn ? '#3B82F6' : '#DBEAFE'), [isOwn]);
-  const waveColor = useMemo(() => (isOwn ? '#FFFFFF' : '#3B82F6'), [isOwn]);
+  const waveColor = useMemo(() => (isOwn ? 'rgba(255, 255, 255, 0.5)' : 'rgba(59, 130, 246, 0.4)'), [isOwn]);
+  const playedWaveColor = useMemo(() => (isOwn ? '#FFFFFF' : '#3B82F6'), [isOwn]);
   const playButtonColor = useMemo(() => (isOwn ? '#FFFFFF' : '#3B82F6'), [isOwn]);
   const textColor = useMemo(() => (isOwn ? '#FFFFFF' : '#1E40AF'), [isOwn]);
 
@@ -228,9 +302,11 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
 
   // Animated style for playback indicator
   const indicatorStyle = useAnimatedStyle(() => {
-    const translateX = playbackProgress.value * containerWidth.value;
+    const progress = Math.min(1, Math.max(0, playbackProgress.value));
+    const translateX = progress * containerWidth.value;
     return {
       transform: [{ translateX }],
+      opacity: hasStartedPlayingShared.value, // Uses shared value instead of state
     };
   });
 
@@ -284,7 +360,6 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
             borderRadius: 6,
             overflow: 'hidden',
             position: 'relative',
-            backgroundColor: isOwn ? 'rgba(255, 255, 255, 0.15)' : 'rgba(59, 130, 246, 0.08)',
             paddingHorizontal: 2,
             justifyContent: 'center',
           }}
@@ -292,7 +367,9 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
           {/* SVG Waveform Visualization */}
           <SvgWaveform 
             waveform={waveform} 
-            waveColor={waveColor} 
+            waveColor={waveColor}
+            playedColor={playedWaveColor}
+            progress={playbackProgress.value}
             height={36}
             width={measuredWidth}
           />

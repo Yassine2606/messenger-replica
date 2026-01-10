@@ -1,12 +1,12 @@
-import { memo } from 'react';
-import { Text, View, Image } from 'react-native';
+import { Text, View } from 'react-native';
 import type { Conversation } from '@/models';
-import { useUserPresence } from '@/hooks';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
+import { UserAvatar } from './UserAvatar';
 
 interface ConversationItemProps {
   conversation: Conversation;
   currentUserId?: number;
+  otherUserLastSeen?: string;
 }
 
 function formatTime(date?: Date | string): string {
@@ -15,13 +15,11 @@ function formatTime(date?: Date | string): string {
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
 }
 
-function ConversationItemComponent({ conversation, currentUserId }: ConversationItemProps) {
+function ConversationItemComponent({ conversation, currentUserId, otherUserLastSeen }: ConversationItemProps) {
   const otherParticipant = conversation.participants?.find((p) => p.id !== currentUserId);
-  // Get real-time presence from store with fallback to conversation data
-  // Only call if participant exists to avoid looking up userId=0
-  const realtimeLastSeen = otherParticipant 
-    ? useUserPresence(otherParticipant.id, otherParticipant.lastSeen)
-    : undefined;
+  
+  // Use provided real-time lastSeen or fall back to conversation data
+  const realtimeLastSeen = otherUserLastSeen || otherParticipant?.lastSeen;
   
   const lastMessage = conversation.lastMessage;
   const isOwnMessage = lastMessage?.senderId === currentUserId;
@@ -62,18 +60,7 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
     <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-4 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
       {/* Avatar */}
       <View className="mr-4 relative justify-center">
-        {otherParticipant?.avatarUrl ? (
-          <Image 
-            source={{ uri: otherParticipant.avatarUrl }} 
-            style={{ width: 64, height: 64, borderRadius: 32 }}
-          />
-        ) : (
-          <View className="h-16 w-16 items-center justify-center rounded-full bg-blue-500">
-            <Text className="text-2xl font-semibold text-white">
-              {otherParticipant?.name?.charAt(0).toUpperCase() || '?'}
-            </Text>
-          </View>
-        )}
+        <UserAvatar avatarUrl={otherParticipant?.avatarUrl} userName={otherParticipant?.name} size="lg" />
         {shouldShowStatus && (
           <View className="absolute bottom-0 right-0 items-center justify-center">
             {statusText === 'Online' ? (
@@ -92,26 +79,28 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
       {/* Content */}
       <View className="flex-1 justify-center">
         {/* Header: Name + Time */}
-        <View className="flex-row items-center justify-between">
+        <View className="flex-row items-center gap-2 mb-1.5">
           <Text className="text-base font-semibold text-gray-900 flex-1 pr-2" numberOfLines={1}>
             {otherParticipant?.name || 'Unknown'}
           </Text>
-          <Text className={`text-xs ${hasUnread ? 'font-semibold text-gray-700' : 'text-gray-500'} flex-shrink-0`}>
+          <Text className={`text-xs flex-shrink-0 ${hasUnread ? 'font-semibold text-gray-700' : 'text-gray-500'}`}>
             {formatTime(lastMessage?.createdAt)}
           </Text>
         </View>
 
-        {/* Footer: Message preview + Status + Unread indicator */}
-        <View className="mt-1.5 flex-row items-center justify-between">
+        {/* Footer: Message preview + Status/Unread indicator */}
+        <View className="flex-row items-center gap-2">
           <Text
             className={`flex-1 text-sm ${hasUnread ? 'font-semibold text-gray-900' : 'text-gray-600'}`}
             numberOfLines={1}>
             {messagePreview}
           </Text>
-          <View className="ml-2 flex-row items-center flex-shrink-0">
+          
+          {/* Status and unread indicator container */}
+          <View className="flex-row items-center gap-1.5 flex-shrink-0">
             {isOwnMessage && status && (
               <Text
-                className={`text-xs font-medium mr-1 ${
+                className={`text-xs font-medium ${
                   status === 'Read' ? 'text-blue-600' : status === 'Delivered' ? 'text-gray-500' : 'text-gray-400'
                 }`}>
                 {status}
@@ -127,4 +116,4 @@ function ConversationItemComponent({ conversation, currentUserId }: Conversation
   );
 }
 
-export const ConversationItem = memo(ConversationItemComponent);
+export { ConversationItemComponent as ConversationItem };

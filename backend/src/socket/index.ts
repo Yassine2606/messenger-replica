@@ -64,6 +64,9 @@ export class SocketManager {
       // Initialize socket conversation tracking
       this.socketConversations.set(socket.id, new Set());
 
+      // Join global conversations room to receive all conversation updates
+      socket.join('conversations');
+
       // Mark pending messages as delivered when user connects
       await this.handleUserConnected(userId);
 
@@ -185,6 +188,9 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('message:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to send message';
       socket.emit('error', {
@@ -249,6 +255,9 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('status:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to update message status';
       socket.emit('error', {
@@ -306,6 +315,9 @@ export class SocketManager {
 
       // Emit to conversation
       this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('status:unified', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to mark message as delivered';
       socket.emit('error', {
@@ -353,6 +365,9 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('message:deleted', unifiedEvent);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to delete message';
       socket.emit('error', {
@@ -770,6 +785,9 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('message:unified', unifiedEvent);
     } catch (error) {
       console.error('[SocketManager] Failed to broadcast unified message:', error);
       throw error;
@@ -802,6 +820,9 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
+      
+      // Also broadcast to global conversations room for conversation list updates
+      this.io.to('conversations').emit('message:deleted', unifiedEvent);
     } catch (error) {
       console.error('[SocketManager] Failed to broadcast unified message deletion:', error);
       throw error;

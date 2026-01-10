@@ -1,9 +1,10 @@
-import { View, Text, TouchableOpacity, Image } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useUserPresence } from '@/hooks';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
+import { UserAvatar } from './UserAvatar';
 
 interface ChatHeaderProps {
   title: string;
@@ -37,22 +38,13 @@ export function ChatHeader({ title, userId, lastSeen, onBackPress, userName, use
           onPress={handleBack}
           className="mr-3 h-10 w-10 items-center justify-center"
           activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={28} color="#3B82F6" />
+          <Ionicons name="arrow-back" size={28} color="#3B82F6" />
         </TouchableOpacity>
 
         {/* Avatar */}
-        {userAvatarUrl ? (
-          <Image 
-            source={{ uri: userAvatarUrl }} 
-            style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
-          />
-        ) : (
-          <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-blue-500">
-            <Text className="text-sm font-semibold text-white">
-              {userName?.charAt(0).toUpperCase() || '?'}
-            </Text>
-          </View>
-        )}
+        <View className="mr-3">
+          <UserAvatar avatarUrl={userAvatarUrl} userName={userName} size="md" />
+        </View>
 
         <View className="flex-1">
           <Text className="text-lg font-semibold text-gray-900" numberOfLines={1}>

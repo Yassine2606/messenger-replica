@@ -236,9 +236,9 @@ export class ExpoAudioService {
         duration = Date.now() - this.recordingStartTime;
       }
 
-      // Compress waveform aggressively for efficient storage/transmission
-      // Fixed 50 points max for consistent bar sizing and minimal payload
-      const waveform = this.compressWaveform(this.waveformSamples, 50);
+      // Compress waveform for efficient storage/transmission
+      // Use 16 points for cleaner, Messenger-style visualization (6-10 bars shown in UI)
+      const waveform = this.compressWaveform(this.waveformSamples, 16);
 
       console.log('[Recording] Stopped -', {
         duration,

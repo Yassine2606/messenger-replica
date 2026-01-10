@@ -21,7 +21,7 @@ export function useSocketEventListener() {
   const { addTypingUser, removeTypingUser, setUserPresence } = useUserStore();
 
   useEffect(() => {
-    // Unified message event - invalidate queries and update UI atomically
+    // Unified message event - invalidate queries
     const unsubscribeMessageUnified = socketClient.onMessageUnified((payload: UnifiedMessageEvent) => {
       resetActivityTimer();
       const { conversationId } = payload;
@@ -29,20 +29,11 @@ export function useSocketEventListener() {
       // Invalidate messages for the conversation
       queryClient.invalidateQueries({
         queryKey: messageQueryKeys.byConversation(conversationId),
-        refetchType: 'all',
       });
       
-      // Invalidate conversations list to update last message, timestamp, and unread counts
+      // Invalidate conversations list to get updated last message and unread count
       queryClient.invalidateQueries({
         queryKey: conversationQueryKeys.list(),
-        refetchType: 'all',
-      });
-
-      // Force refetch conversations immediately (critical for real-time updates)
-      queryClient.refetchQueries({
-        queryKey: conversationQueryKeys.list(),
-      }).catch((error) => {
-        console.error('[Socket] Failed to refetch conversations on message:', error);
       });
     });
 
@@ -54,20 +45,11 @@ export function useSocketEventListener() {
       // Invalidate messages to reflect read/delivered status
       queryClient.invalidateQueries({
         queryKey: messageQueryKeys.byConversation(conversationId),
-        refetchType: 'all',
       });
       
-      // Invalidate conversations to update unread counts
+      // Invalidate conversations for unread count updates
       queryClient.invalidateQueries({
         queryKey: conversationQueryKeys.list(),
-        refetchType: 'all',
-      });
-
-      // Force refetch conversations immediately for real-time unread count updates
-      queryClient.refetchQueries({
-        queryKey: conversationQueryKeys.list(),
-      }).catch((error) => {
-        console.error('[Socket] Failed to refetch conversations on status update:', error);
       });
     });
 
@@ -79,20 +61,11 @@ export function useSocketEventListener() {
       // Invalidate messages to reflect deletion
       queryClient.invalidateQueries({
         queryKey: messageQueryKeys.byConversation(conversationId),
-        refetchType: 'all',
       });
       
-      // Invalidate conversations to update unread counts if deleted message was unread
+      // Invalidate conversations list
       queryClient.invalidateQueries({
         queryKey: conversationQueryKeys.list(),
-        refetchType: 'all',
-      });
-
-      // Force refetch conversations immediately for real-time updates
-      queryClient.refetchQueries({
-        queryKey: conversationQueryKeys.list(),
-      }).catch((error) => {
-        console.error('[Socket] Failed to refetch conversations on message deletion:', error);
       });
     });
 
@@ -112,17 +85,9 @@ export function useSocketEventListener() {
       // Update user presence with lastSeen timestamp
       setUserPresence(payload.userId, payload.lastSeen || new Date().toISOString());
       
-      // Invalidate conversations to refresh participant lastSeen display
+      // Invalidate conversations for real-time lastSeen updates in conversation list
       queryClient.invalidateQueries({
         queryKey: conversationQueryKeys.list(),
-        refetchType: 'all',
-      });
-
-      // Force refetch conversations immediately for real-time lastSeen updates
-      queryClient.refetchQueries({
-        queryKey: conversationQueryKeys.list(),
-      }).catch((error) => {
-        console.error('[Socket] Failed to refetch conversations on user status:', error);
       });
     });
 
@@ -138,22 +103,20 @@ export function useSocketEventListener() {
       removeTypingUser(payload.userId);
     });
 
-    // Socket activity timeout detection - refetch all data if no activity for 30 seconds
+    // Socket activity timeout detection - invalidate all data if no activity for 30 seconds
     const activityTimeoutInterval = setInterval(() => {
       const timeSinceLastActivity = Date.now() - lastActivityTime;
       const INACTIVITY_THRESHOLD = 30000; // 30 seconds (reduced from 60s for better responsiveness)
 
       if (timeSinceLastActivity > INACTIVITY_THRESHOLD) {
-        // Force refresh all message and conversation queries
+        // Invalidate all message and conversation queries
         queryClient.invalidateQueries({
           queryKey: messageQueryKeys.all,
-          refetchType: 'all',
         });
         queryClient.invalidateQueries({
           queryKey: conversationQueryKeys.list(),
-          refetchType: 'all',
         });
-        // Reset timer after refresh
+        // Reset timer after invalidation
         lastActivityTime = Date.now();
       }
     }, 15000); // Check every 15 seconds (reduced from 30s for better responsiveness)

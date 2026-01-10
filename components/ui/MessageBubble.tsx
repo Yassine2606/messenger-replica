@@ -13,7 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
 import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
-import { ReplyIndicator } from './index';
+import { ReplyIndicator } from './ReplyIndicator';
+import { UserAvatar } from './UserAvatar';
 import { scheduleOnRN } from 'react-native-worklets';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '');
@@ -23,9 +24,10 @@ interface MessageBubbleProps {
   isOwn: boolean;
   previousMessage?: Message;
   nextMessage?: Message;
+  showTimeSeparator?: boolean; // Whether a time separator appears before this message
   onReply?: (message: Message) => void;
   onShowMenu?: (coordinates: BubbleCoordinates | null) => void;
-  onContextMenu?: (message: Message) => void;
+  onContextMenu?: (message: Message, coordinates?: { pageX: number; pageY: number }) => void;
   onImagePress?: (imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => void;
   onScrollToReply?: (message: Message) => void;
   // Shared animated values for synchronized timestamp drag across all messages of one side
@@ -60,13 +62,17 @@ function isWithinMinute(date1: Date | string | undefined, date2: Date | string |
 function getBorderRadius(
   isOwn: boolean,
   isGroupedWithPrevious: boolean,
-  isGroupedWithNext: boolean
+  isGroupedWithNext: boolean,
+  hasTimeSeparatorAbove?: boolean
 ) {
   const baseRadius = MESSAGE.BORDER_RADIUS_BASE;
   const tightRadius = MESSAGE.BORDER_RADIUS_TIGHT;
 
+  // If time separator is above, don't group at top (reset top radius to base)
+  const effectiveGroupedWithPrevious = isGroupedWithPrevious && !hasTimeSeparatorAbove;
+
   if (isOwn) {
-    if (isGroupedWithPrevious && isGroupedWithNext) {
+    if (effectiveGroupedWithPrevious && isGroupedWithNext) {
       return {
         borderTopLeftRadius: baseRadius,
         borderTopRightRadius: tightRadius,
@@ -74,7 +80,7 @@ function getBorderRadius(
         borderBottomLeftRadius: baseRadius,
       };
     }
-    if (isGroupedWithPrevious) {
+    if (effectiveGroupedWithPrevious) {
       return {
         borderTopLeftRadius: baseRadius,
         borderTopRightRadius: tightRadius,
@@ -91,7 +97,7 @@ function getBorderRadius(
       };
     }
   } else {
-    if (isGroupedWithPrevious && isGroupedWithNext) {
+    if (effectiveGroupedWithPrevious && isGroupedWithNext) {
       return {
         borderTopLeftRadius: tightRadius,
         borderTopRightRadius: baseRadius,
@@ -99,7 +105,7 @@ function getBorderRadius(
         borderBottomLeftRadius: tightRadius,
       };
     }
-    if (isGroupedWithPrevious) {
+    if (effectiveGroupedWithPrevious) {
       return {
         borderTopLeftRadius: tightRadius,
         borderTopRightRadius: baseRadius,
@@ -124,6 +130,7 @@ function MessageBubbleComponent({
   isOwn,
   previousMessage,
   nextMessage,
+  showTimeSeparator,
   onReply,
   onShowMenu,
   onContextMenu,
@@ -157,9 +164,9 @@ function MessageBubbleComponent({
     return {
       isGroupedWithPrevious: prev,
       isGroupedWithNext: next,
-      borderRadiusStyle: getBorderRadius(isOwn, prev, next),
+      borderRadiusStyle: getBorderRadius(isOwn, prev, next, showTimeSeparator),
     };
-  }, [message.id, isOwn, previousMessage?.id, nextMessage?.id]);
+  }, [message.id, isOwn, previousMessage?.id, nextMessage?.id, showTimeSeparator]);
 
   const handleReply = useCallback(() => {
     if (onReply) {
@@ -215,15 +222,21 @@ function MessageBubbleComponent({
       // Silently fail on unsupported platforms
     });
 
-    // Open context menu
-    if (onContextMenu) {
+    // Capture bubble coordinates
+    if (bubbleRef.current) {
+      bubbleRef.current.measure((x, y, width, height, pageX, pageY) => {
+        if (onContextMenu) {
+          onContextMenu(message, { pageX, pageY });
+        }
+      });
+    } else if (onContextMenu) {
       onContextMenu(message);
     }
   }, [message, onContextMenu]);
 
   // GESTURE 3: Long press gesture for context menu (simultaneous with swipe)
   const longPressGesture = Gesture.LongPress()
-    .enabled(!message.isDeleted && isOwn)
+    .enabled(!message.isDeleted)
     .minDuration(300)
     .onStart(() => {
       runOnJS(triggerLongPress)();
@@ -273,6 +286,18 @@ function MessageBubbleComponent({
           style={rowAnimatedStyle}
           className={`relative flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
           
+          {/* Avatar - only show for other people's messages when not grouped with previous */}
+          {!isOwn && !isGroupedWithPrevious && (
+            <View className="mr-2 justify-end">
+              <UserAvatar avatarUrl={message.sender?.avatarUrl} userName={message.sender?.name} size="sm" />
+            </View>
+          )}
+          
+          {/* Spacer when avatar is hidden (grouped with previous) */}
+          {!isOwn && isGroupedWithPrevious && (
+            <View className="mr-2 w-9" />
+          )}
+          
           {/* Reply icon - behind bubble */}
           <Animated.View
             style={[
@@ -296,9 +321,13 @@ function MessageBubbleComponent({
                 <>
                   <Animated.View 
                     ref={imageLayoutRef as any}
-                    className="max-w-[280px] overflow-hidden rounded-2xl"
-                    collapsable={false}
-                  >
+                    style={{
+                      width: 200,
+                      height: 240,
+                      borderRadius: 16,
+                      overflow: 'hidden',
+                    }}
+                    collapsable={false}>
                     <Pressable
                       onPress={() => {
                         if (imageLayoutRef.current && 'measure' in imageLayoutRef.current) {
@@ -313,11 +342,13 @@ function MessageBubbleComponent({
                         } else {
                           onImagePress?.(message.mediaUrl!);
                         }
-                      }}>
+                      }}
+                      style={{ flex: 1 }}>
                       <Image
                         source={{ uri: message.mediaUrl.startsWith('http') ? message.mediaUrl : `${API_BASE_URL}${message.mediaUrl}` }}
-                        style={{ width: 120, height: 200 }}
-                        contentFit="contain"
+                        style={{ flex: 1, width: '100%', height: '100%' }}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
                       />
                     </Pressable>
                   </Animated.View>
