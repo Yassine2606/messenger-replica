@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/contexts';
 
 interface ButtonProps {
   label: string;
@@ -20,23 +21,34 @@ export function Button({
   disabled = false,
   icon,
 }: ButtonProps) {
-  const getVariantStyles = () => {
+  const { colors } = useTheme();
+
+  const getVariantBgColor = () => {
     switch (variant) {
       case 'secondary':
-        return 'border border-gray-300 bg-white';
+        return colors.input.bg;
       case 'destructive':
-        return 'bg-red-600';
+        return colors.error;
       default:
-        return 'bg-blue-600';
+        return colors.primary;
+    }
+  };
+
+  const getVariantBorderColor = () => {
+    switch (variant) {
+      case 'secondary':
+        return colors.border.primary;
+      default:
+        return 'transparent';
     }
   };
 
   const getTextColor = () => {
     switch (variant) {
       case 'secondary':
-        return 'text-gray-900';
+        return colors.text.primary;
       default:
-        return 'text-white';
+        return colors.text.inverted;
     }
   };
 
@@ -56,22 +68,28 @@ export function Button({
       onPress={onPress}
       disabled={disabled || loading}
       activeOpacity={0.8}
-      className={`flex-row items-center justify-center rounded-lg ${getVariantStyles()} ${getSizeStyles()} ${
-        disabled || loading ? 'opacity-60' : ''
-      }`}>
+      style={{
+        backgroundColor: getVariantBgColor(),
+        borderColor: getVariantBorderColor(),
+        borderWidth: variant === 'secondary' ? 1 : 0,
+        opacity: disabled || loading ? 0.6 : 1,
+      }}
+      className={`flex-row items-center justify-center rounded-lg ${getSizeStyles()}`}>
       {loading ? (
-        <ActivityIndicator color={variant === 'secondary' ? '#374151' : '#FFFFFF'} />
+        <ActivityIndicator color={getTextColor()} />
       ) : (
         <>
           {icon && (
             <Ionicons
               name={icon as any}
               size={16}
-              color={variant === 'secondary' ? '#374151' : '#FFFFFF'}
+              color={getTextColor()}
               style={{ marginRight: 8 }}
             />
           )}
-          <Text className={`text-center text-sm font-semibold ${getTextColor()}`}>{label}</Text>
+          <Text style={{ color: getTextColor() }} className="text-center text-sm font-semibold">
+            {label}
+          </Text>
         </>
       )}
     </TouchableOpacity>

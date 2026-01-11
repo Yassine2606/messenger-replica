@@ -14,8 +14,9 @@ import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
 import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
 import { ReplyIndicator } from './ReplyIndicator';
-import { UserAvatar } from './UserAvatar';
+import { UserAvatar } from '../user';
 import { scheduleOnRN } from 'react-native-worklets';
+import { useTheme } from '@/contexts';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '');
 
@@ -139,6 +140,8 @@ function MessageBubbleComponent({
   sharedRowTranslateX: propsSharedRowTranslateX,
   sharedTimestampOpacity: propsSharedTimestampOpacity,
 }: MessageBubbleProps) {
+  const { colors } = useTheme();
+  
   // Use provided shared values, or fallback to local ones if not provided
   const localRowTranslateX = useSharedValue(0);
   const localTimestampOpacity = useSharedValue(0);
@@ -266,8 +269,10 @@ function MessageBubbleComponent({
   if (message.isDeleted) {
     return (
       <View className={`mb-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
-        <View className="max-w-[75%] rounded-2xl bg-gray-100 px-3 py-2">
-          <Text className="text-sm italic text-gray-400">Message deleted</Text>
+        <View style={{ backgroundColor: colors.bg.tertiary }} className="max-w-[75%] rounded-2xl px-3 py-2">
+          <Text style={{ color: colors.text.tertiary }} className="text-sm italic">
+            Message deleted
+          </Text>
         </View>
       </View>
     );
@@ -310,7 +315,7 @@ function MessageBubbleComponent({
               replyIconAnimatedStyle,
             ]}
             pointerEvents="none">
-            <Ionicons name="arrow-undo" size={20} color="#9CA3AF" />
+            <Ionicons name="arrow-undo" size={20} color={colors.text.secondary} />
           </Animated.View>
 
           {/* Message bubble with gestures for reply and long press for context menu */}
@@ -322,8 +327,8 @@ function MessageBubbleComponent({
                   <Animated.View 
                     ref={imageLayoutRef as any}
                     style={{
-                      width: 200,
-                      height: 240,
+                      width: 160,
+                      height: 200,
                       borderRadius: 16,
                       overflow: 'hidden',
                     }}
@@ -353,8 +358,12 @@ function MessageBubbleComponent({
                     </Pressable>
                   </Animated.View>
                   {message.content && (
-                    <View className={`mt-1 rounded-2xl px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}>
-                      <Text className={`text-base leading-5 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                    <View
+                      style={{ backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg }}
+                      className="mt-1 rounded-2xl px-3 py-2">
+                      <Text
+                        style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
+                        className="text-base leading-5">
                         {message.content}
                       </Text>
                     </View>
@@ -362,9 +371,14 @@ function MessageBubbleComponent({
                 </>
               ) : message.type === 'text' ? (
                 <View
-                  className={`max-w-[280px] px-3 py-2 ${isOwn ? 'bg-blue-500' : 'bg-gray-200'}`}
-                  style={borderRadiusStyle}>
-                  <Text className={`text-base leading-6 ${isOwn ? 'text-white' : 'text-gray-900'}`}>
+                  style={{
+                    backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg,
+                    ...borderRadiusStyle,
+                  }}
+                  className="max-w-[280px] px-3 py-2">
+                  <Text
+                    style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
+                    className="text-base leading-6">
                     {message.content}
                   </Text>
                 </View>
@@ -383,7 +397,7 @@ function MessageBubbleComponent({
               timestampAnimatedStyle,
             ]}
             pointerEvents="none">
-            <Text className="text-xs text-gray-400">
+            <Text style={{ color: colors.text.tertiary }} className="text-xs">
               {formatTime(message.createdAt)}
             </Text>
           </Animated.View>

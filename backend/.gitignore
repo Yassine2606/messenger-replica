@@ -27,6 +27,7 @@ Thumbs.db
 *.log
 logs/
 
+.github/
 # Runtime
 uploads/
 tmp/

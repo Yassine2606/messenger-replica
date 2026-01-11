@@ -1,17 +1,18 @@
 import { Tabs, Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '@/contexts';
+import { useAuth, useTheme } from '@/contexts';
 import { useAuthStore } from '@/stores';
 
 export default function TabsLayout() {
   const { isHydrated } = useAuth();
+  const { colors } = useTheme();
   const { token } = useAuthStore();
 
   if (!isHydrated) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.primary }}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -24,8 +25,12 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#3B82F6',
-        tabBarInactiveTintColor: '#9CA3AF',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.text.tertiary,
+        tabBarStyle: {
+          backgroundColor: colors.bg.primary,
+          borderTopColor: colors.border.primary,
+        },
       }}>
       <Tabs.Screen
         name="index"

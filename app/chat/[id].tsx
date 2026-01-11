@@ -1,19 +1,23 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, TextInput, ActivityIndicator, Text, FlatList, Alert, Platform, Dimensions, Pressable } from 'react-native';
+import { View, TextInput, ActivityIndicator, Text, FlatList, Alert, Platform } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSharedValue, useAnimatedStyle, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, ErrorBoundary, ErrorState, MessageStatus, TypingIndicator, TimeSeparator, ImageViewer, AudioRecordingControls, VoiceMessagePlayer, MessageContextMenuModal, ImageMediaPicker } from '@/components/ui';
+import { ErrorBoundary, ErrorState, SocketConnectionStatus } from '@/components/common';
+import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, MessageStatus, TypingIndicator, TimeSeparator, MessageContextMenuModal } from '@/components/chat';
+import { ImageViewer, AudioRecordingControls, VoiceMessagePlayer, ImageMediaPicker } from '@/components/media';
 import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
+import { useTheme } from '@/contexts';
 import { socketClient } from '@/lib/socket';
 import { SPACING } from '@/lib';
 import { Message, MessageType } from '@/models';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ChatScreen() {
+  const { colors } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const conversationId = parseInt(id || '0', 10);
   const inputRef = useRef<TextInput>(null);
@@ -303,6 +307,8 @@ export default function ChatScreen() {
                 duration={item.mediaDuration || 0}
                 isOwn={isOwn}
                 message={item}
+                previousMessage={previousMessage}
+                nextMessage={nextMessage}
                 onContextMenu={handleMessageContextMenu}
               />
             </View>
@@ -320,10 +326,11 @@ export default function ChatScreen() {
   // ============== Loading State ==============
   if (messagesLoading) {
     return (
-      <View className="flex-1 bg-white">
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
         <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <SocketConnectionStatus />
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#3B82F6" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
         <ChatInputFooter
           messageText={messageText}
@@ -344,8 +351,9 @@ export default function ChatScreen() {
   // ============== Error State ==============
   if (messagesError && !messages.length) {
     return (
-      <View className="flex-1 bg-white">
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
         <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <SocketConnectionStatus />
         <View className="flex-1 items-center justify-center">
           <ErrorState
             error={messagesError as Error}
@@ -378,8 +386,9 @@ export default function ChatScreen() {
         <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} sourceLayout={imageSourceLayout} imageDimensions={imageViewerDimensions} />
 
         <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <SocketConnectionStatus />
 
-        <View style={{ flex: 1, position: 'relative' }}>
+        <View style={{ flex: 1, position: 'relative', backgroundColor: colors.bg.primary }}>
           <View ref={messageAreaRef} style={{ flex: 1 }}>
             <FlatList
               ref={flatListRef}
@@ -396,11 +405,12 @@ export default function ChatScreen() {
                 }
               }}
               onEndReachedThreshold={0.5}
+              scrollIndicatorInsets={{ right: 1 }}
               ListFooterComponent={
                 <>
                   {isFetchingNextPage && (
                     <View className="py-4 items-center">
-                      <ActivityIndicator size="small" color="#3B82F6" />
+                      <ActivityIndicator size="small" color={colors.primary} />
                     </View>
                   )}
                   {messagesError && messages.length > 0 && (
@@ -421,9 +431,13 @@ export default function ChatScreen() {
               contentContainerStyle={{ paddingHorizontal: SPACING.MESSAGE_HORIZONTAL, paddingVertical: SPACING.MESSAGE_VERTICAL }}
               ListEmptyComponent={
                 <View className="flex-1 items-center justify-center py-20">
-                  <Ionicons name="chatbubble-ellipses-outline" size={48} color="#9CA3AF" />
-                  <Text className="text-base text-gray-400">No messages yet</Text>
-                  <Text className="mt-1 text-sm text-gray-400">Start the conversation</Text>
+                  <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.text.tertiary} />
+                  <Text style={{ color: colors.text.secondary }} className="text-base">
+                    No messages yet
+                  </Text>
+                  <Text style={{ color: colors.text.secondary }} className="mt-1 text-sm">
+                    Start the conversation
+                  </Text>
                 </View>
               }
             />
@@ -456,31 +470,33 @@ export default function ChatScreen() {
           userName={otherParticipant?.name}
         />
 
-        {/* Recording Controls - Shown while recording */}
-        <AudioRecordingControls
-          isRecording={isRecording}
-          duration={recordingDuration}
-          waveform={currentWaveform}
-          onStop={handleStopRecording}
-          onCancel={handleCancelRecording}
-        />
-
-        <ChatInputFooter
-          messageText={messageText}
-          onChangeText={handleMessageTextChange}
-          onSend={handleSend}
-          replyToMessage={replyToMessage}
-          onCancelReply={cancelReply}
-          sendingMessage={sendMutation.isPending}
-          inputRef={inputRef}
-          onPickImage={openMediaPicker}
-          onTakePhoto={handleTakePhoto}
-          onPickAudio={handleStartRecording}
-        />
+        {/* Recording Controls or Chat Input - one or the other */}
+        {isRecording ? (
+          <AudioRecordingControls
+            isRecording={isRecording}
+            duration={recordingDuration}
+            waveform={currentWaveform}
+            onStop={handleStopRecording}
+            onCancel={handleCancelRecording}
+          />
+        ) : (
+          <ChatInputFooter
+            messageText={messageText}
+            onChangeText={handleMessageTextChange}
+            onSend={handleSend}
+            replyToMessage={replyToMessage}
+            onCancelReply={cancelReply}
+            sendingMessage={sendMutation.isPending}
+            inputRef={inputRef}
+            onPickImage={openMediaPicker}
+            onTakePhoto={handleTakePhoto}
+            onPickAudio={handleStartRecording}
+          />
+        )}
 
         {/* Media Picker Bottom Sheet */}
         {mediaPickerVisible && (
-          <View className="bg-white border-t border-gray-200">
+          <View style={{ backgroundColor: colors.bg.primary, borderTopColor: colors.border.primary }} className="border-t">
             <ImageMediaPicker
               onImageSelected={handleMediaPickerImageSelected}
               onClose={() => setMediaPickerVisible(false)}

@@ -2,10 +2,13 @@ import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetAllUsers, useCreateOrGetConversation } from '@/hooks';
-import { ChatHeader } from '@/components/ui';
+import { useTheme } from '@/contexts';
+import { Header, SocketConnectionStatus } from '@/components/common';
+import { UserItem } from '@/components/user';
 import type { User } from '@/models';
 
 export default function SelectUserScreen() {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { data: users = [], isLoading } = useGetAllUsers();
   const createOrGetConversation = useCreateOrGetConversation();
@@ -27,44 +30,40 @@ export default function SelectUserScreen() {
     }
   };
 
-  
-
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-white">
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }} className="items-center justify-center">
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
     <View
-      className="flex-1 bg-white"
-      style={{ paddingBottom: insets.bottom }}>
-      <ChatHeader title="New Conversation" />
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg.primary,
+        paddingBottom: insets.bottom,
+      }}>
+      <Header title="New Conversation" showBackButton={true} />
+      <SocketConnectionStatus />
 
       <FlatList
         data={users}
         keyExtractor={(item) => item.id.toString()}
+        scrollIndicatorInsets={{ right: 1 }}
         renderItem={({ item }) => (
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => handleUserPress(item)}
-            className="flex-row items-center border-b border-gray-100 px-4 py-4">
-            <View className="mr-3 h-12 w-12 items-center justify-center rounded-full bg-blue-500">
-              <Text className="text-lg font-semibold text-white">
-                {item.name.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View className="flex-1">
-              <Text className="text-base font-semibold text-gray-900">{item.name}</Text>
-              <Text className="mt-1 text-sm text-gray-500">{item.email}</Text>
-            </View>
+            onPress={() => handleUserPress(item)}>
+            <UserItem user={item} />
           </TouchableOpacity>
         )}
         ListEmptyComponent={
           <View className="flex-1 items-center justify-center py-20">
-            <Text className="text-base text-gray-500">No users available</Text>
+            <Text style={{ color: colors.text.secondary }} className="text-base">
+              No users available
+            </Text>
           </View>
         }
       />

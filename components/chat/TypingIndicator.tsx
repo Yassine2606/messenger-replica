@@ -5,6 +5,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
+import { useTheme } from '@/contexts';
 
 interface TypingIndicatorProps {
   userName?: string;
@@ -14,6 +15,7 @@ interface TypingIndicatorProps {
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
+  const { colors } = useTheme();
   const opacity = useSharedValue(0);
   const height = useSharedValue(visible ? 1 : 0);
 
@@ -33,11 +35,38 @@ export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
     overflow: 'hidden',
   }));
 
-  // Static dot opacity pattern (no complex animations)
   const getDotOpacity = (index: number) => {
     const values = [0.4, 0.7, 1.0];
     return values[index];
   };
+
+  const styles = StyleSheet.create({
+    container: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colors.bg.secondary,
+      borderTopWidth: 1,
+      borderTopColor: colors.border.primary,
+    },
+    label: {
+      fontSize: 13,
+      color: colors.text.secondary,
+      fontWeight: '500',
+    },
+    dotsContainer: {
+      flexDirection: 'row',
+      gap: 4,
+    },
+    dot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.primary,
+    },
+  });
 
   return (
     <AnimatedView style={[containerStyle, { pointerEvents: visible ? 'auto' : 'none' }]}>
@@ -58,31 +87,3 @@ export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
     </AnimatedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F3F4F6',
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  label: {
-    fontSize: 13,
-    color: '#6B7280',
-    fontWeight: '500',
-  },
-  dotsContainer: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#3B82F6',
-  },
-});

@@ -4,9 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfile, useLogout, useUpdateProfile } from '@/hooks';
-import { CustomModal, FormField, Button, ProfileCard, AvatarUploader, UserAvatar } from '@/components/ui';
+import { useTheme } from '@/contexts';
+import { CustomModal, FormField, Button } from '@/components/common';
+import { ProfileCard, UserAvatar } from '@/components/user';
+import { AvatarUploader } from '@/components/media';
 
 export default function ProfileScreen() {
+  const { colors, toggleTheme, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const { data: user, isLoading } = useProfile();
   const logoutMutation = useLogout();
@@ -67,8 +71,8 @@ export default function ProfileScreen() {
 
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-white">
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }} className="items-center justify-center">
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -76,18 +80,23 @@ export default function ProfileScreen() {
   if (!user) {
     return (
       <View
-        className="flex-1 bg-white"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: colors.bg.primary }}
+        className="flex-1 bg-white">
         <View className="flex-1 items-center justify-center px-6">
-          <Text className="text-xl font-semibold text-gray-900">No user data</Text>
-          <Text className="mt-2 text-center text-base text-gray-600">
+          <Text style={{ color: colors.text.primary }} className="text-xl font-semibold">
+            No user data
+          </Text>
+          <Text style={{ color: colors.text.secondary }} className="mt-2 text-center text-base">
             Please login again.
           </Text>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => router.replace('/auth/login' as any)}
-            className="mt-6 rounded-lg bg-blue-600 px-6 py-3">
-            <Text className="font-semibold text-white">Go to Login</Text>
+            style={{ backgroundColor: colors.primary }}
+            className="mt-6 rounded-lg px-6 py-3">
+            <Text style={{ color: colors.text.inverted }} className="font-semibold">
+              Go to Login
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -97,24 +106,44 @@ export default function ProfileScreen() {
   return (
     <>
       <ScrollView
-        className="flex-1 bg-gradient-to-b from-white to-gray-50"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom + 20 }}
+        style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top, paddingBottom: insets.bottom + 20 }}
         contentContainerStyle={{ flexGrow: 1 }}
         scrollEnabled={true}
         showsVerticalScrollIndicator={false}>
         <View className="px-6 py-8">
-          {/* Header */}
+          {/* Header with Theme Toggle */}
           <View className="mb-8 flex-row items-end justify-between">
             <View className="flex-1">
-              <Text className="text-3xl font-bold text-gray-900">Profile</Text>
-              <Text className="mt-1 text-sm text-gray-600">Manage your account</Text>
+              <Text style={{ color: colors.text.primary }} className="text-3xl font-bold">
+                Profile
+              </Text>
+              <Text style={{ color: colors.text.secondary }} className="mt-1 text-sm">
+                Manage your account
+              </Text>
             </View>
-            <TouchableOpacity
-              onPress={openEditModal}
-              className="h-10 w-10 items-center justify-center rounded-full bg-blue-500 ml-4"
-              activeOpacity={0.7}>
-              <Ionicons name="pencil" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
+            <View className="flex-row gap-2 ml-4">
+              {/* Theme Toggle Button */}
+              <TouchableOpacity
+                onPress={toggleTheme}
+                style={{ backgroundColor: colors.bg.secondary }}
+                className="h-10 w-10 items-center justify-center rounded-full"
+                activeOpacity={0.7}
+                title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
+                <Ionicons
+                  name={theme === 'light' ? 'moon' : 'sunny'}
+                  size={20}
+                  color={colors.primary}
+                />
+              </TouchableOpacity>
+              {/* Edit Profile Button */}
+              <TouchableOpacity
+                onPress={openEditModal}
+                style={{ backgroundColor: colors.primary }}
+                className="h-10 w-10 items-center justify-center rounded-full"
+                activeOpacity={0.7}>
+                <Ionicons name="pencil" size={20} color={colors.text.inverted} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Avatar Section */}
@@ -122,7 +151,9 @@ export default function ProfileScreen() {
             <View className="mb-4 shadow-lg">
               <UserAvatar avatarUrl={user.avatarUrl} userName={user.name} size="lg" />
             </View>
-            <Text className="text-xl font-semibold text-gray-900">{user.name}</Text>
+            <Text style={{ color: colors.text.primary }} className="text-xl font-semibold">
+              {user.name}
+            </Text>
           </View>
 
           {/* Info Cards */}

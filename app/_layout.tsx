@@ -7,8 +7,15 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PortalProvider } from '@gorhom/portal';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { AuthProvider, SocketProvider } from '@/contexts';
+import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
+import { AuthProvider, SocketProvider, ThemeProvider } from '@/contexts';
 import { useSocketEventListener } from '@/hooks';
+
+// Configure Reanimated logger - disable strict mode
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false,
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,15 +52,17 @@ export default function Layout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <QueryClientProvider client={queryClient}>
-            <AuthProvider>
-              <SocketProvider>
-                <BottomSheetModalProvider>
-                  <PortalProvider>
-                    <AppContent />
-                  </PortalProvider>
-                </BottomSheetModalProvider>
-              </SocketProvider>
-            </AuthProvider>
+            <ThemeProvider>
+              <AuthProvider>
+                <SocketProvider>
+                  <BottomSheetModalProvider>
+                    <PortalProvider>
+                      <AppContent />
+                    </PortalProvider>
+                  </BottomSheetModalProvider>
+                </SocketProvider>
+              </AuthProvider>
+            </ThemeProvider>
           </QueryClientProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

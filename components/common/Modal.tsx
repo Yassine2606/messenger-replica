@@ -3,6 +3,7 @@ import { Modal, View, Text, TouchableOpacity, Pressable, ScrollView } from 'reac
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
+import { useTheme } from '@/contexts';
 
 interface ModalProps {
   visible: boolean;
@@ -12,6 +13,8 @@ interface ModalProps {
 }
 
 export function CustomModal({ visible, title, onClose, children }: ModalProps) {
+  const { colors } = useTheme();
+
   // Animated values
   const backdropOpacity = useSharedValue(0);
   const contentTranslateY = useSharedValue(600);
@@ -53,21 +56,46 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
   return (
     <Modal visible={visible} animationType="none" transparent statusBarTranslucent>
       {/* Backdrop */}
-      <Animated.View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, backdropStyle]}>
+      <Animated.View
+        style={[
+          { flex: 1, backgroundColor: colors.overlay },
+          backdropStyle,
+        ]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
 
       {/* Modal Content with Keyboard Avoiding */}
-      <Animated.View style={[{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '90%', borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: 'white' }, contentStyle]}>
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            maxHeight: '90%',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            backgroundColor: colors.bg.primary,
+          },
+          contentStyle,
+        ]}>
         <KeyboardAvoidingView behavior="padding" className="flex-1">
           {/* Header */}
-          <View className="flex-row items-center justify-between border-b border-gray-200 px-6 py-4">
-            <Text className="text-lg font-semibold text-gray-900">{title}</Text>
+          <View
+            style={{
+              borderBottomColor: colors.border.primary,
+              backgroundColor: colors.bg.primary,
+            }}
+            className="flex-row items-center justify-between border-b px-6 py-4">
+            <Text style={{ color: colors.text.primary }} className="text-lg font-semibold">
+              {title}
+            </Text>
             <TouchableOpacity
               onPress={onClose}
-              className="h-8 w-8 items-center justify-center rounded-full bg-gray-100"
+              style={{ backgroundColor: colors.bg.secondary }}
+              className="h-8 w-8 items-center justify-center rounded-full"
               activeOpacity={0.7}>
-              <Ionicons name="close" size={20} color="#374151" />
+              <Ionicons name="close" size={20} color={colors.text.secondary} />
             </TouchableOpacity>
           </View>
 

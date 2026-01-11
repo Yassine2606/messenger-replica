@@ -5,13 +5,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useGetConversations, useProfile, useUserPresence } from '@/hooks';
-import { ConversationItem, ErrorState } from '@/components/ui';
+import { useTheme } from '@/contexts';
+import { ErrorState, Header, SocketConnectionStatus } from '@/components/common';
+import { ConversationItem } from '@/components/chat';
 import type { Conversation } from '@/models';
 import { useUserStore } from '@/stores';
 import { socketClient } from '@/lib/socket';
 import { conversationQueryKeys } from '@/lib/query-keys';
 
 export default function ChatsScreen() {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { data: user } = useProfile();
   const { data: conversations = [], isLoading, error, refetch } = useGetConversations();
@@ -80,12 +83,12 @@ export default function ChatsScreen() {
 
   const keyExtractor = (item: Conversation) => `conv-${item.id}`;
 
-  const ItemSeparator = () => <View className="h-px bg-gray-100" />;
+  const ItemSeparator = () => <View style={{ backgroundColor: colors.border.primary }} className="h-px" />;
 
   if (isLoading && filteredConversations.length === 0) {
     return (
-      <View className="flex-1 items-center justify-center bg-white">
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }} className="items-center justify-center">
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -93,16 +96,21 @@ export default function ChatsScreen() {
   if (error && filteredConversations.length === 0) {
     return (
       <View
-        className="flex-1 bg-white"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
-        <View className="border-b border-gray-200 px-4 py-4">
-          <Text className="text-2xl font-bold text-gray-900">Chats</Text>
-        </View>
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg.primary,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+        }}>
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
+        <Header title="Chats" showBackButton={false} />
+        <SocketConnectionStatus />
         <ErrorState
           error={error as Error}
           onRetry={() => refetch()}
           message="Failed to load conversations. Please check your connection."
         />
+      </View>
       </View>
     );
   }
@@ -110,14 +118,20 @@ export default function ChatsScreen() {
   if (filteredConversations.length === 0) {
     return (
       <View
-        className="flex-1 bg-white"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
-        <View className="border-b border-gray-200 px-4 py-4">
-          <Text className="text-2xl font-bold text-gray-900">Chats</Text>
-        </View>
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg.primary,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+        }}>
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
+        <Header title="Chats" showBackButton={false} />
+        <SocketConnectionStatus />
         <View className="flex-1 items-center justify-center px-6">
-          <Text className="text-xl font-semibold text-gray-900">No conversations yet</Text>
-          <Text className="mt-2 text-center text-base text-gray-600">
+          <Text style={{ color: colors.text.primary }} className="text-xl font-semibold">
+            No conversations yet
+          </Text>
+          <Text style={{ color: colors.text.secondary }} className="mt-2 text-center text-base">
             Start chatting with others by tapping the button below.
           </Text>
         </View>
@@ -125,21 +139,27 @@ export default function ChatsScreen() {
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => router.push('/select-user')}
-          className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full bg-blue-500 shadow-lg"
-          style={{ marginBottom: insets.bottom }}>
-          <Ionicons name="create-outline" size={28} color="white" />
+          style={{
+            backgroundColor: colors.primary,
+            marginBottom: insets.bottom,
+          }}
+          className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full shadow-lg">
+          <Ionicons name="create-outline" size={28} color={colors.text.inverted} />
         </TouchableOpacity>
+      </View>
       </View>
     );
   }
 
   return (
     <View
-      className="flex-1 bg-white"
-      style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
-      <View className="border-b border-gray-200 px-4 py-4">
-        <Text className="text-2xl font-bold text-gray-900">Chats</Text>
-      </View>
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg.primary,
+        paddingBottom: insets.bottom,
+      }}>
+      <Header title="Chats" showBackButton={false} />
+      <SocketConnectionStatus />
 
       {error && (
         <View className="mx-4 my-2">
@@ -161,7 +181,7 @@ export default function ChatsScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor="#3B82F6"
+            tintColor={colors.primary}
           />
         }
         maxToRenderPerBatch={10}
@@ -173,9 +193,12 @@ export default function ChatsScreen() {
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={() => router.push('/select-user')}
-        className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full bg-blue-500 shadow-lg"
-        style={{ marginBottom: insets.bottom }}>
-        <Ionicons name="create-outline" size={28} color="white" />
+        style={{
+          backgroundColor: colors.primary,
+          marginBottom: insets.bottom,
+        }}
+        className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full shadow-lg">
+        <Ionicons name="create-outline" size={28} color={colors.text.inverted} />
       </TouchableOpacity>
     </View>
   );

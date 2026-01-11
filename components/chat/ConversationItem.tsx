@@ -1,7 +1,8 @@
 import { Text, View } from 'react-native';
+import { useTheme } from '@/contexts';
 import type { Conversation } from '@/models';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
-import { UserAvatar } from './UserAvatar';
+import { UserAvatar } from '../user';
 
 interface ConversationItemProps {
   conversation: Conversation;
@@ -16,6 +17,7 @@ function formatTime(date?: Date | string): string {
 }
 
 function ConversationItemComponent({ conversation, currentUserId, otherUserLastSeen }: ConversationItemProps) {
+  const { colors } = useTheme();
   const otherParticipant = conversation.participants?.find((p) => p.id !== currentUserId);
   
   // Use provided real-time lastSeen or fall back to conversation data
@@ -57,20 +59,25 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
   const isOnline = statusText === 'Online';
 
   return (
-    <View className={`flex-row items-stretch border-b border-gray-100 px-4 py-4 ${hasUnread ? 'bg-blue-50' : 'bg-white'}`}>
+    <View
+      style={{
+        borderBottomColor: colors.border.primary,
+        backgroundColor: hasUnread ? colors.bg.secondary : colors.bg.primary,
+      }}
+      className="flex-row items-stretch border-b px-4 py-4">
       {/* Avatar */}
       <View className="mr-4 relative justify-center">
         <UserAvatar avatarUrl={otherParticipant?.avatarUrl} userName={otherParticipant?.name} size="lg" />
         {shouldShowStatus && (
           <View className="absolute bottom-0 right-0 items-center justify-center">
             {statusText === 'Online' ? (
-              <View className="h-4 w-4 rounded-full border-2 border-white bg-green-500" />
+              <View style={{ backgroundColor: colors.status.online }} className="h-4 w-4 rounded-full border-2 border-white" />
             ) : (
-                <View className="rounded-full border border-gray-300 bg-white px-0.5 py-0.5">
-                <Text className="text-xs font-medium text-gray-600">
+              <View style={{ borderColor: colors.border.primary, backgroundColor: colors.bg.primary }} className="rounded-full border px-0.5 py-0.5">
+                <Text style={{ color: colors.text.secondary }} className="text-xs font-medium">
                   {statusText}
                 </Text>
-                </View>
+              </View>
             )}
           </View>
         )}
@@ -80,10 +87,15 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
       <View className="flex-1 justify-center">
         {/* Header: Name + Time */}
         <View className="flex-row items-center gap-2 mb-1.5">
-          <Text className="text-base font-semibold text-gray-900 flex-1 pr-2" numberOfLines={1}>
+          <Text
+            style={{ color: colors.text.primary }}
+            className="text-base font-semibold flex-1 pr-2"
+            numberOfLines={1}>
             {otherParticipant?.name || 'Unknown'}
           </Text>
-          <Text className={`text-xs flex-shrink-0 ${hasUnread ? 'font-semibold text-gray-700' : 'text-gray-500'}`}>
+          <Text
+            style={{ color: hasUnread ? colors.text.primary : colors.text.secondary }}
+            className={`text-xs flex-shrink-0 ${hasUnread ? 'font-semibold' : ''}`}>
             {formatTime(lastMessage?.createdAt)}
           </Text>
         </View>
@@ -91,7 +103,8 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
         {/* Footer: Message preview + Status/Unread indicator */}
         <View className="flex-row items-center gap-2">
           <Text
-            className={`flex-1 text-sm ${hasUnread ? 'font-semibold text-gray-900' : 'text-gray-600'}`}
+            style={{ color: hasUnread ? colors.text.primary : colors.text.secondary }}
+            className={`flex-1 text-sm ${hasUnread ? 'font-semibold' : ''}`}
             numberOfLines={1}>
             {messagePreview}
           </Text>
@@ -100,14 +113,20 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
           <View className="flex-row items-center gap-1.5 flex-shrink-0">
             {isOwnMessage && status && (
               <Text
-                className={`text-xs font-medium ${
-                  status === 'Read' ? 'text-blue-600' : status === 'Delivered' ? 'text-gray-500' : 'text-gray-400'
-                }`}>
+                style={{
+                  color:
+                    status === 'Read'
+                      ? colors.status.read
+                      : status === 'Delivered'
+                        ? colors.status.delivered
+                        : colors.status.sent,
+                }}
+                className="text-xs font-medium">
                 {status}
               </Text>
             )}
             {hasUnread && (
-              <View className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+              <View style={{ backgroundColor: colors.primary }} className="h-2.5 w-2.5 rounded-full" />
             )}
           </View>
         </View>

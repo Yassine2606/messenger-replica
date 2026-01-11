@@ -3,10 +3,12 @@ import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { Link, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { Input } from '@/components/ui';
+import { useTheme } from '@/contexts';
+import { Input } from '@/components/common';
 import { useLogin } from '@/hooks';
 
 export default function LoginScreen() {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const loginMutation = useLogin();
 
@@ -38,7 +40,6 @@ export default function LoginScreen() {
 
     try {
       await loginMutation.mutateAsync({ email, password });
-      // Navigate to tabs (mutation sets auth state)
       router.replace('/(tabs)' as any);
     } catch (error: any) {
       const status = error?.response?.status;
@@ -57,7 +58,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top }}>
       <KeyboardAwareScrollView
         contentContainerStyle={{
           flexGrow: 1,
@@ -68,8 +69,12 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         bottomOffset={8}>
         <View className="mb-8">
-          <Text className="mb-2 text-3xl font-bold text-gray-900">Welcome Back</Text>
-          <Text className="text-base text-gray-600">Sign in to continue</Text>
+          <Text style={{ color: colors.text.primary }} className="mb-2 text-3xl font-bold">
+            Welcome Back
+          </Text>
+          <Text style={{ color: colors.text.secondary }} className="text-base">
+            Sign in to continue
+          </Text>
         </View>
 
         <Input
@@ -95,19 +100,28 @@ export default function LoginScreen() {
         />
 
         <TouchableOpacity
-          className={`mt-6 rounded-lg py-4 ${loginMutation.isPending ? 'bg-blue-400' : 'bg-blue-600'}`}
+          style={{
+            backgroundColor: loginMutation.isPending ? `${colors.primary}80` : colors.primary,
+            marginTop: 24,
+            borderRadius: 8,
+            paddingVertical: 16,
+          }}
           onPress={handleLogin}
           disabled={loginMutation.isPending}>
-          <Text className="text-center text-base font-semibold text-white">
+          <Text style={{ color: colors.text.inverted }} className="text-center text-base font-semibold">
             {loginMutation.isPending ? 'Signing in...' : 'Sign In'}
           </Text>
         </TouchableOpacity>
 
         <View className="mt-6 flex-row justify-center">
-          <Text className="text-base text-gray-600">Don&apos;t have an account? </Text>
+          <Text style={{ color: colors.text.secondary }} className="text-base">
+            Don&apos;t have an account?{' '}
+          </Text>
           <Link href="/auth/register" asChild>
             <TouchableOpacity>
-              <Text className="text-base font-semibold text-blue-600">Sign Up</Text>
+              <Text style={{ color: colors.primary }} className="text-base font-semibold">
+                Sign Up
+              </Text>
             </TouchableOpacity>
           </Link>
         </View>

@@ -1,6 +1,7 @@
 import { View, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/contexts';
 
 interface UserAvatarProps {
   avatarUrl?: string;
@@ -9,6 +10,7 @@ interface UserAvatarProps {
 }
 
 export function UserAvatar({ avatarUrl, userName, size = 'md' }: UserAvatarProps) {
+  const { colors } = useTheme();
   const sizeConfig = {
     sm: { container: 32, icon: 16, textSize: 'text-xs' },
     md: { container: 40, icon: 30, textSize: 'text-sm' },
@@ -33,12 +35,15 @@ export function UserAvatar({ avatarUrl, userName, size = 'md' }: UserAvatarProps
   if (userName) {
     return (
       <View
-        className="items-center justify-center rounded-full bg-blue-500"
         style={{
           width: config.container,
           height: config.container,
+          backgroundColor: colors.avatarBg,
+          borderRadius: config.container / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
         }}>
-        <Text className={`font-semibold text-white ${config.textSize}`}>
+        <Text style={{ color: colors.text.inverted }} className={`font-semibold ${config.textSize}`}>
           {userName.charAt(0).toUpperCase()}
         </Text>
       </View>
@@ -47,12 +52,15 @@ export function UserAvatar({ avatarUrl, userName, size = 'md' }: UserAvatarProps
 
   return (
     <View
-      className="items-center justify-center rounded-full bg-gray-300"
       style={{
         width: config.container,
         height: config.container,
+        backgroundColor: colors.bg.tertiary,
+        borderRadius: config.container / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
       }}>
-      <Ionicons name="person" size={config.icon} color="white" />
+      <Ionicons name="person" size={config.icon} color={colors.text.secondary} />
     </View>
   );
 }

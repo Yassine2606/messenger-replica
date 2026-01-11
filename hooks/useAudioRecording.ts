@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAudioRecorder, RecordingPresets } from 'expo-audio';
-import { audioService } from '@/services';
+import { audioService } from '@/lib';
 
 /**
  * useAudioRecording: Hook for managing audio recording with real waveform capture

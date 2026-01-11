@@ -4,16 +4,16 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
+import { useTheme } from '@/contexts';
 import Svg, { Line } from 'react-native-svg';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  Easing,
-  useAnimatedReaction,
   runOnJS,
 } from 'react-native-reanimated';
 import type { Message } from '@/models';
+import { UserAvatar } from '../user';
 
 interface VoiceMessagePlayerProps {
   audioUrl: string;
@@ -21,6 +21,8 @@ interface VoiceMessagePlayerProps {
   duration: number; // milliseconds
   isOwn?: boolean; // Whether this is the current user's message
   message?: Message; // Message object for context menu
+  previousMessage?: Message; // For grouping detection
+  nextMessage?: Message; // For grouping detection
   onContextMenu?: (message: Message) => void;
 }
 
@@ -154,8 +156,26 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   duration,
   isOwn = false,
   message,
+  previousMessage,
+  nextMessage,
   onContextMenu,
 }: VoiceMessagePlayerProps) {
+  // Grouping logic - same as MessageBubble
+  const isSameSender = useMemo(() => {
+    return message?.senderId === previousMessage?.senderId;
+  }, [message?.senderId, previousMessage?.senderId]);
+
+  const isWithinMinute = useMemo(() => {
+    if (!message?.createdAt || !previousMessage?.createdAt) return false;
+    const d1 = typeof message.createdAt === 'string' ? new Date(message.createdAt).getTime() : new Date(message.createdAt).getTime();
+    const d2 = typeof previousMessage.createdAt === 'string' ? new Date(previousMessage.createdAt).getTime() : new Date(previousMessage.createdAt).getTime();
+    return Math.abs(d1 - d2) < 60000; // 1 minute threshold
+  }, [message?.createdAt, previousMessage?.createdAt]);
+
+  const isGroupedWithPrevious = useMemo(() => {
+    return isSameSender && isWithinMinute;
+  }, [isSameSender, isWithinMinute]);
+
   const player = useAudioPlayer({ uri: audioUrl }, { downloadFirst: true });
   const status = useAudioPlayerStatus(player);
 
@@ -289,11 +309,16 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
 
   // Memoized computed values
   const durationSeconds = useMemo(() => duration / 1000, [duration]);
-  const bgColor = useMemo(() => (isOwn ? '#3B82F6' : '#DBEAFE'), [isOwn]);
-  const waveColor = useMemo(() => (isOwn ? 'rgba(255, 255, 255, 0.5)' : 'rgba(59, 130, 246, 0.4)'), [isOwn]);
-  const playedWaveColor = useMemo(() => (isOwn ? '#FFFFFF' : '#3B82F6'), [isOwn]);
-  const playButtonColor = useMemo(() => (isOwn ? '#FFFFFF' : '#3B82F6'), [isOwn]);
-  const textColor = useMemo(() => (isOwn ? '#FFFFFF' : '#1E40AF'), [isOwn]);
+  
+  const { colors } = useTheme();
+  const bgColor = useMemo(() => (isOwn ? colors.audio.own.bg : colors.audio.other.bg), [isOwn, colors]);
+  const waveColor = useMemo(
+    () => (isOwn ? 'rgba(255, 255, 255, 0.5)' : colors.audio.other.waveColor + '66'),
+    [isOwn, colors]
+  );
+  const playedWaveColor = useMemo(() => (isOwn ? colors.audio.own.waveColor : colors.audio.other.waveColor), [isOwn, colors]);
+  const playButtonColor = useMemo(() => (isOwn ? colors.audio.own.playButtonColor : colors.audio.other.playButtonColor), [isOwn, colors]);
+  const textColor = useMemo(() => (isOwn ? colors.audio.own.text : colors.audio.other.text), [isOwn, colors]);
 
   const formattedDuration = useMemo(
     () => formatTime(durationSeconds),
@@ -311,19 +336,32 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   });
 
   return (
-    <GestureDetector gesture={longPressGesture}>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          borderRadius: 12,
-          backgroundColor: bgColor,
-          paddingHorizontal: 10,
-          paddingVertical: 8,
-          width: 260,
-        }}
-      >
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 7, marginBottom: 2 }}>
+      {/* Avatar - only show for other people's messages when not grouped with previous */}
+      {!isOwn && !isGroupedWithPrevious && (
+        <View className="mb-2">
+          <UserAvatar avatarUrl={message?.sender?.avatarUrl} userName={message?.sender?.name} size="sm" />
+        </View>
+      )}
+
+      {/* Spacer when avatar is hidden (grouped with previous) */}
+      {!isOwn && isGroupedWithPrevious && (
+        <View className="mb-2 w-9" />
+      )}
+
+      <GestureDetector gesture={longPressGesture}>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            borderRadius: 12,
+            backgroundColor: bgColor,
+            paddingHorizontal: 10,
+            paddingVertical: 8,
+            width: 200,
+          }}
+        >
         {/* Play/Pause Button */}
         <Pressable
           onPress={handlePlayPause}
@@ -334,9 +372,10 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
             borderRadius: 18,
             justifyContent: 'center',
             alignItems: 'center',
-            backgroundColor: isOwn ? 'rgba(255, 255, 255, 0.2)' : 'rgba(59, 130, 246, 0.1)',
-          }}
-        >
+            backgroundColor: isOwn
+              ? 'rgba(255, 255, 255, 0.2)'
+              : colors.audio.other.playButtonColor + '1A',
+          }}>
           <Ionicons
             name={
               !status.isLoaded ? 'hourglass-outline' : status.playing ? 'pause-sharp' : 'play-sharp'
@@ -402,8 +441,9 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
         >
           {formattedDuration}
         </Text>
-      </View>
-    </GestureDetector>
+        </View>
+      </GestureDetector>
+    </View>
   );
 });
 
