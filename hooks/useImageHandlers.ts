@@ -22,7 +22,7 @@ export function useImageHandlers({
   const handlePickImage = useCallback(async (imageUri?: string) => {
     // If URI is provided directly (from media picker), use it
     // Otherwise, launch the image picker
-    let uri = imageUri;
+    let uri: string | null | undefined = imageUri;
     if (!uri) {
       uri = await pickImageFromLibrary();
     }

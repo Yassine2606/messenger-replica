@@ -15,7 +15,6 @@ export interface MessageDTO {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
-  waveform?: number[]; // Audio waveform
   replyToId?: number;
   replyTo?: Partial<MessageDTO>;
   isDeleted: boolean;
@@ -153,21 +152,6 @@ export function messageToDTO(message: Message): MessageDTO {
   const replyTo = (message as any).replyTo;
   const reads = (message as any).reads || [];
 
-  // Safely parse waveform - handle null, string, or already-parsed array
-  let waveform: number[] | undefined = undefined;
-  if (message.waveform) {
-    try {
-      if (typeof message.waveform === 'string') {
-        waveform = JSON.parse(message.waveform);
-      } else if (Array.isArray(message.waveform)) {
-        waveform = message.waveform;
-      }
-    } catch (error) {
-      console.warn('Failed to parse waveform:', error);
-      waveform = undefined;
-    }
-  }
-
   return {
     id: message.id,
     conversationId: message.conversationId,
@@ -182,7 +166,6 @@ export function messageToDTO(message: Message): MessageDTO {
     mediaUrl: message.mediaUrl,
     mediaMimeType: message.mediaMimeType,
     mediaDuration: message.mediaDuration,
-    waveform,
     replyToId: message.replyToId || undefined,
     replyTo: replyTo ? messageToDTO(replyTo as unknown as Message) : undefined,
     isDeleted: message.isDeleted,

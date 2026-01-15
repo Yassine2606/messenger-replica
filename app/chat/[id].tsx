@@ -7,7 +7,7 @@ import Animated from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { ErrorBoundary, ErrorState, SocketConnectionStatus } from '@/components/common';
 import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, MessageStatus, TypingIndicator, TimeSeparator, MessageContextMenuModal } from '@/components/chat';
-import { ImageViewer, AudioRecordingControls, VoiceMessagePlayer, ImageMediaPicker } from '@/components/media';
+import { ImageViewer, AudioRecordingControls, VoiceMessagePlayer } from '@/components/media';
 import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
 import { useTheme } from '@/contexts';
@@ -96,7 +96,7 @@ export default function ChatScreen() {
     width: number;
     height: number;
   } | undefined>();
-  const [mediaPickerVisible, setMediaPickerVisible] = useState(false);
+
   const { isUserTyping } = useUserStore();
   const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
 
@@ -118,19 +118,14 @@ export default function ChatScreen() {
     onReplyCleared: () => setReplyToMessage(null),
   });
 
-  // ============== Media Picker Handler ==============
-  const handleMediaPickerImageSelected = useCallback((uri: string) => {
-    // Use the existing image handler to send the image
-    handlePickImage(uri);
+  // ============== Image Picker Handler ==============
+  const openImagePicker = useCallback(() => {
+    handlePickImage();
   }, [handlePickImage]);
-
-  const openMediaPicker = useCallback(() => {
-    setMediaPickerVisible(true);
-  }, []);
 
   // ============== Audio Handlers Hook ==============
   const audioRecording = useAudioRecording();
-  const { isRecording, duration: recordingDuration, currentWaveform } = audioRecording;
+  const { isRecording, duration: recordingDuration } = audioRecording;
   const { handleStartRecording, handleStopRecording, handleCancelRecording } = useAudioHandlers({
     conversationId,
     replyToMessage,
@@ -475,7 +470,7 @@ export default function ChatScreen() {
           <AudioRecordingControls
             isRecording={isRecording}
             duration={recordingDuration}
-            waveform={currentWaveform}
+            waveform={[]}
             onStop={handleStopRecording}
             onCancel={handleCancelRecording}
           />
@@ -488,21 +483,13 @@ export default function ChatScreen() {
             onCancelReply={cancelReply}
             sendingMessage={sendMutation.isPending}
             inputRef={inputRef}
-            onPickImage={openMediaPicker}
+            onPickImage={openImagePicker}
             onTakePhoto={handleTakePhoto}
             onPickAudio={handleStartRecording}
           />
         )}
 
-        {/* Media Picker Bottom Sheet */}
-        {mediaPickerVisible && (
-          <View style={{ backgroundColor: colors.bg.primary, borderTopColor: colors.border.primary }} className="border-t">
-            <ImageMediaPicker
-              onImageSelected={handleMediaPickerImageSelected}
-              onClose={() => setMediaPickerVisible(false)}
-            />
-          </View>
-        )}
+
       </View>
     </KeyboardAvoidingView>
   );

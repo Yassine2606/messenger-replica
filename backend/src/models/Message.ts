@@ -18,7 +18,6 @@ export interface MessageAttributes {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
-  waveform?: string; // JSON stringified number[] for audio waveform
   replyToId?: ForeignKey<Message['id']>;
   isDeleted: boolean;
   deletedAt?: Date;
@@ -37,7 +36,6 @@ export class Message extends Model<MessageAttributes, MessageCreationAttributes>
   public mediaUrl?: string;
   public mediaMimeType?: string;
   public mediaDuration?: number;
-  public waveform?: string;
   public replyToId?: ForeignKey<Message['id']>;
   public isDeleted!: boolean;
   public deletedAt?: Date;
@@ -90,11 +88,6 @@ Message.init(
     mediaDuration: {
       type: DataTypes.INTEGER,
       allowNull: true,
-    },
-    waveform: {
-      type: DataTypes.TEXT, // Store as JSON string
-      allowNull: true,
-      comment: 'Compressed audio waveform data as JSON array',
     },
     replyToId: {
       type: DataTypes.INTEGER,

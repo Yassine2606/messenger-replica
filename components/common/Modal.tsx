@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Modal, View, Text, TouchableOpacity, Pressable, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, View, Text, TouchableOpacity, Pressable, ScrollView, Platform } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
@@ -14,6 +14,7 @@ interface ModalProps {
 
 export function CustomModal({ visible, title, onClose, children }: ModalProps) {
   const { colors } = useTheme();
+  const [displayModal, setDisplayModal] = useState(visible);
 
   // Animated values
   const backdropOpacity = useSharedValue(0);
@@ -31,17 +32,25 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
 
   useEffect(() => {
     if (visible) {
-      // Animate in
-      backdropOpacity.value = withTiming(1, {
-        duration: 300,
-        easing: Easing.inOut(Easing.ease),
-      });
-      contentTranslateY.value = withTiming(0, {
-        duration: 300,
-        easing: Easing.out(Easing.ease),
-      });
+      // Show modal and animate in
+      setDisplayModal(true);
+      
+      // Delay animation start on Android to ensure modal is rendered
+      const delay = Platform.OS === 'android' ? 50 : 0;
+      const timer = setTimeout(() => {
+        backdropOpacity.value = withTiming(1, {
+          duration: 300,
+          easing: Easing.inOut(Easing.ease),
+        });
+        contentTranslateY.value = withTiming(0, {
+          duration: 300,
+          easing: Easing.out(Easing.ease),
+        });
+      }, delay);
+      
+      return () => clearTimeout(timer);
     } else {
-      // Animate out
+      // Animate out first, then hide modal
       backdropOpacity.value = withTiming(0, {
         duration: 200,
         easing: Easing.in(Easing.ease),
@@ -50,11 +59,18 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
         duration: 200,
         easing: Easing.in(Easing.ease),
       });
+      
+      // Hide modal after animation completes
+      const timer = setTimeout(() => {
+        setDisplayModal(false);
+      }, 200);
+      
+      return () => clearTimeout(timer);
     }
   }, [visible, backdropOpacity, contentTranslateY]);
 
   return (
-    <Modal visible={visible} animationType="none" transparent statusBarTranslucent>
+    <Modal visible={displayModal} animationType="none" transparent statusBarTranslucent>
       {/* Backdrop */}
       <Animated.View
         style={[

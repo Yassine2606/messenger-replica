@@ -99,8 +99,6 @@ export default function ChatsScreen() {
         style={{
           flex: 1,
           backgroundColor: colors.bg.primary,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
         }}>
       <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
         <Header title="Chats" showBackButton={false} />
@@ -121,8 +119,6 @@ export default function ChatsScreen() {
         style={{
           flex: 1,
           backgroundColor: colors.bg.primary,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
         }}>
       <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
         <Header title="Chats" showBackButton={false} />

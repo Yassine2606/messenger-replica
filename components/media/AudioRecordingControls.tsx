@@ -1,7 +1,6 @@
 import React, { useMemo, useEffect } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Line } from 'react-native-svg';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import { useTheme } from '@/contexts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,90 +14,12 @@ interface AudioRecordingControlsProps {
 }
 
 /**
- * Live SVG Waveform - renders real-time audio input with animated sliding wave
- * Shows symmetric bars that respond to input amplitude
- * Auto-slides to make room for new incoming data
- */
-const LiveSvgWaveform = React.memo(
-  ({
-    waveform,
-    waveColor,
-    height = 60,
-    width = 300,
-  }: {
-    waveform: number[];
-    waveColor: string;
-    height?: number;
-    width?: number;
-  }) => {
-    // Dynamic bar count based on width - compact spacing for live feel
-    const barWidth = 2.5;
-    const barGap = 1.5;
-    const barWithGap = barWidth + barGap;
-    const dynamicBarCount = Math.max(20, Math.floor(width / barWithGap));
-
-    // Get last N bars to show live/recent data
-    const displayWaveform = useMemo(() => {
-      if (waveform.length === 0) {
-        return Array(dynamicBarCount).fill(0.3); // Placeholder bars
-      }
-      return waveform.slice(-dynamicBarCount);
-    }, [waveform, dynamicBarCount]);
-
-    const centerY = height / 2;
-    const maxAmplitude = useMemo(
-      () => Math.max(...displayWaveform, 0.1) || 0.1,
-      [displayWaveform]
-    );
-    const barSpacing = width / (displayWaveform.length + 1);
-
-    return (
-      <Svg width="100%" height={height} preserveAspectRatio="none">
-        {displayWaveform.map((amplitude, i) => {
-          const normalizedAmplitude = (amplitude / maxAmplitude) * (height / 2 - 4);
-          const x = (i + 1) * barSpacing;
-          const barHeight = Math.max(3, normalizedAmplitude);
-
-          return (
-            <React.Fragment key={`live-wave-${i}`}>
-              {/* Top bar */}
-              <Line
-                x1={x}
-                y1={centerY - 1}
-                x2={x}
-                y2={centerY - 1 - barHeight}
-                stroke={waveColor}
-                strokeWidth={barWidth}
-                strokeLinecap="round"
-              />
-              {/* Bottom bar - mirror */}
-              <Line
-                x1={x}
-                y1={centerY + 1}
-                x2={x}
-                y2={centerY + 1 + barHeight}
-                stroke={waveColor}
-                strokeWidth={barWidth}
-                strokeLinecap="round"
-              />
-            </React.Fragment>
-          );
-        })}
-      </Svg>
-    );
-  }
-);
-
-LiveSvgWaveform.displayName = 'LiveSvgWaveform';
-
-/**
- * AudioRecordingControls: Premium recording UI with live animated waveform
- * Replaces chat input during recording with real-time visual feedback
+ * AudioRecordingControls: Clean and simple recording UI
  * Features:
- * - Live SVG waveform that responds to input amplitude
- * - Auto-sliding wave for continuous real-time effect
+ * - Recording status with pulsing indicator
+ * - Duration timer
+ * - Clear cancel and send buttons
  * - Dark/light theme support
- * - Smooth animations and haptic feedback
  */
 export const AudioRecordingControls = React.memo(
   function AudioRecordingControls({
@@ -194,12 +115,9 @@ export const AudioRecordingControls = React.memo(
             paddingHorizontal: 8,
             borderWidth: 1,
           }}>
-          <LiveSvgWaveform
-            waveform={waveform}
-            waveColor={colors.primary}
-            height={60}
-            width={300}
-          />
+          <View className="items-center justify-center h-12">
+            <Ionicons name="volume-mute" size={32} color={colors.primary} />
+          </View>
         </View>
 
         {/* Action Buttons */}

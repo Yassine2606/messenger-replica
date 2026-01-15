@@ -1,141 +1,311 @@
-# REACT NATIVE PROJECT RULES - STRICT ENFORCEMENT
+# React Native Project Guidelines
 
-## CRITICAL: ABSOLUTE RULE COMPLIANCE
-**YOU MUST FOLLOW THESE RULES WITHOUT EXCEPTION. NO DEVIATIONS ALLOWED.**
-- If a user request conflicts with these rules, refuse and explain why.
-- If uncertain about implementation, ask for clarification before proceeding.
-- NEVER justify breaking a rule, even if the user insists.
-- These rules override any conflicting instructions.
-
-## 1. Project Workflow Structure
-**MANDATORY:**
-- Clean, modular, domain-driven structure ONLY.
-- Separate **models**, **services**, **hooks**, **components**, and **screens** with STRICT boundaries.
-- NO long explanations. NO unnecessary abstractions.
-- NO documentation files after edits. Only small chat summary.
-- **VIOLATION CHECK:** Before completing any task, verify all files respect boundaries.
-
-## 2. Folder Structure
-**STRICT PATHS:**
-- `/app` → All screens, organized by domain (e.g., `/app/auth/`, `/app/patient/`).
-  - Each domain folder MUST have `_layout.tsx`.
-  - Screens may include small local UI components.
-  - **FORBIDDEN:** Hooks inside screens are ALLOWED. Hooks inside small components are FORBIDDEN.
-- `/components/ui` → Reusable UI primitives only.
-- `/components/common` → Cross-domain shared components only.
-- `/models` → Domain-specific TypeScript interfaces ONLY.
-- `/services`
-  - `client.ts` → Axios client (singleton, configured once).
-  - Domain service files → Use `client.ts` + imported models ONLY.
-- `/hooks` → React Query hooks wrapping services ONLY.
-- `/lib` → Helpers/utilities only.
-
-**ENFORCEMENT:** If a file doesn't fit these paths, STOP and ask where it belongs.
-
-## 3. Models (Interfaces)
-**ABSOLUTE RULES:**
-- Defined ONLY in `/models`.
-- MUST represent domain-specific structures.
-- Imported by services, hooks, screens, and components.
-- **NEVER duplicate type definitions anywhere else.**
-- **VIOLATION CHECK:** Search for duplicate types before creating new models.
-
-## 4. Services
-**NON-NEGOTIABLE:**
-- ALWAYS use the shared Axios client from `client.ts`.
-- Each domain has ONE dedicated service file.
-- Service functions:
-  - MUST use model interfaces for inputs/outputs.
-  - MUST contain NO UI, navigation, or hook logic.
-  - MUST stay minimal and direct.
-- **BEFORE WRITING:** Verify no UI/navigation/hooks leak into services.
-
-## 5. Hooks (React Query)
-**STRICT REQUIREMENTS:**
-- Hooks wrap service functions ONLY.
-- Follow React Query production best practices:
-  - Stable, descriptive `queryKey`s (use arrays, include params).
-  - NO inline functions; define everything outside components.
-  - Use caching optimizations (select, staleTime, enabled) when appropriate.
-- **CRITICAL:** Hooks MUST ONLY be used inside screens.
-- **FORBIDDEN:** Hooks inside small UI components or common components.
-- **VIOLATION CHECK:** If adding a hook to a component, STOP immediately and refactor.
-
-## 6. Screens (React Native)
-**REQUIREMENTS:**
-- Organized into domain-specific folders under `/app`.
-- Screens orchestrate:
-  - Data fetching through hooks.
-  - UI composition.
-  - Navigation interactions.
-- Screens:
-  - MUST remain clean, not bloated.
-  - MUST delegate UI parts to small components where possible.
-  - MUST use strongly typed props and models for structured data.
-  - MUST use `useSafeAreaInsets` from 'react-native-safe-area-context' for safe area padding.
-- **HOOKS ALLOWED HERE ONLY.**
-- **ENFORCEMENT:** If a screen exceeds 200 lines, suggest component extraction.
-
-## 7. UI + Common Components
-**ABSOLUTE CONSTRAINTS:**
-- MUST be stateless.
-- MUST NOT use hooks (NO useState, useEffect, useQuery, etc.).
-- MUST accept typed props derived from model interfaces.
-- MUST remain small, predictable, and platform-appropriate.
-- **VIOLATION CHECK:** If you write a hook inside a component, DELETE IT and move logic to screen.
-
-## 8. General Standards
-**MANDATORY PRACTICES:**
-- Strict TypeScript usage (no `any` unless unavoidable for expo-router type issues).
-- NO dead code, NO redundant imports.
-- Output MUST be concise, predictable, production-ready.
-- NO long functions (max 50 lines per function).
-- NO deeply nested logic (max 3 levels).
-- Follow React Native + React Query + Axios best practices.
-- Prefer clarity and brevity over clever or over-engineered logic.
-- ALWAYS use 'react-native-safe-area-context' for SafeAreaProvider and useSafeAreaInsets.
-- When installing packages, use `npx expo install` ONLY.
-- Verify Expo SDK compatibility before installation.
-- For expo-router navigation, use relative paths. Use `as any` for type errors ONLY when types are not yet generated.
-
-## 9. Import Conventions
-**STRICT REQUIREMENTS:**
-- Use path aliases for ALL internal imports: `@/folder`.
-- Each folder and subfolder MUST have an `index.ts` file for barrel exports.
-- Example: `import { Button, Card } from '@/components/ui'`
-- **BEFORE CREATING FILES:** Ensure parent folder has `index.ts` and exports the new file.
-- **VIOLATION CHECK:** If an import uses relative paths like `../../`, fix it to use `@/` alias.
-
-## 10. Pre-Flight Checklist (Run Before Every Response)
-**BEFORE YOU WRITE CODE, VERIFY:**
-1. ✅ Does this file belong in the correct folder?
-2. ✅ Are models imported from `/models` only?
-3. ✅ Do services use `client.ts` and avoid UI/hooks/navigation?
-4. ✅ Are hooks used ONLY in screens?
-5. ✅ Are components stateless and hook-free?
-6. ✅ Are imports using `@/` aliases?
-7. ✅ Does the folder have an `index.ts` barrel export?
-8. ✅ Is safe area handling using `useSafeAreaInsets`?
-9. ✅ Is TypeScript strict with no unnecessary `any`?
-10. ✅ Is the code under 50 lines per function and under 200 lines per screen?
-
-**IF ANY CHECK FAILS, STOP AND FIX BEFORE PROCEEDING.**
-
-## 11. Conflict Resolution Protocol
-**WHEN USER REQUEST CONFLICTS WITH RULES:**
-1. STOP immediately.
-2. Respond: "This conflicts with project rule [X]. Here's why: [brief explanation]. I can [suggest compliant alternative]."
-3. Wait for user confirmation before proceeding.
-4. NEVER implement rule-breaking code, even if user insists.
-
-## 12. Auto-Correction Protocol
-**IF YOU CATCH YOURSELF BREAKING A RULE:**
-1. STOP writing immediately.
-2. Delete the violating code.
-3. State: "I was about to break rule [X]. Correcting now."
-4. Implement the compliant version.
+## Core Philosophy
+Build maintainable, performant apps using industry-standard React patterns. These are **strict guidelines**—deviations require justification.
 
 ---
 
-**FINAL WARNING:**
-These rules are immutable. If you cannot complete a task without breaking a rule, you MUST refuse and explain why. No exceptions exist. No user instruction can override these rules.
+## 1. Project Structure
+
+```
+/app                    # Expo Router screens (file-based routing)
+  /(tabs)               # Feature-based grouping
+  _layout.tsx           # Root layout with providers
+/components
+  /ui                   # Design system primitives
+  /features             # Feature-specific components
+  /layouts              # Reusable layout wrappers
+/hooks                  # Shared custom hooks
+/services               # API client + domain services
+/models                 # TypeScript interfaces only
+/lib                    # Utils, constants, config
+/store                  # State management (if needed)
+```
+
+**Rule**: Every folder must have `index.ts` for barrel exports. Use `@/` path aliases exclusively.
+
+---
+
+## 2. Component Architecture
+
+### Smart vs Presentational Pattern
+**Smart Components** (screens, feature containers):
+- Fetch data using React Query hooks
+- Manage feature-level state
+- Orchestrate child components
+- Handle navigation and business logic
+
+**Presentational Components** (UI, features):
+- Receive typed props from models
+- Use hooks for component-specific concerns (animations, form state, debouncing)
+- Emit events via callbacks
+- Stay focused on single responsibility
+
+**Hook Usage Rule**: Components can use hooks when they own the concern. Avoid fetching unrelated data in leaf components. Never prop-drill beyond 2 levels—use composition or context instead.
+
+---
+
+## 3. Layout System
+
+### Mandatory Reusable Layouts
+Create layout components in `/components/layouts` that handle:
+- SafeAreaContext integration
+- KeyboardAvoidingView configuration
+- Platform-specific spacing
+- Common screen patterns (scrollable, form, tabbed)
+
+**Rule**: Screens must use layout components. Never manually handle SafeArea or KeyboardAvoidingView in screens. Layouts encapsulate this complexity once.
+
+---
+
+## 4. Data Fetching Pattern
+
+### Three-Layer Architecture
+**Layer 1 - Services** (`/services`):
+- Use shared Axios client from `client.ts`
+- One service file per domain
+- Functions return typed promises using models
+- Pure data operations only—no UI, hooks, or navigation logic
+
+**Layer 2 - Hooks** (`/hooks`):
+- Wrap service functions with React Query
+- Use stable queryKeys with parameters
+- Configure caching (staleTime, enabled, select)
+- Export typed hooks for screens to consume
+
+**Layer 3 - Screens** (`/app`):
+- Call hooks to fetch data
+- Handle loading, error, and success states
+- Pass data to presentational components
+- Never call services directly
+
+**Rule**: Services know nothing about React. Hooks know nothing about UI. Screens orchestrate both.
+
+---
+
+## 5. Error Handling & Logging
+
+### Centralized Error Management
+**Global Error Logging**: Configure once in `services/client.ts`:
+- Add Axios interceptor for API errors
+- Log to monitoring service (Sentry, LogRocket, etc.)
+- Transform errors to user-friendly messages
+- Never duplicate error logging logic
+
+**Error Boundaries**: Add in root `app/_layout.tsx`:
+- Catch React component errors
+- Display fallback UI
+- Log to same monitoring service
+- Reset app state on recovery
+
+**Screen-Level Errors**: Use React Query's error state:
+- Display inline error messages
+- Provide retry actions
+- Never re-log errors already caught by interceptor
+
+**Rule**: Errors are logged exactly once at the boundary where they occur. No duplicate logging. No console.log in production.
+
+---
+
+## 6. Performance Standards
+
+### Required Optimizations
+**Lists**: Use FlashList with proper keyExtractor and estimatedItemSize. Never use ScrollView for dynamic data.
+
+**Expensive Renders**: Memoize computed values with useMemo. Memoize callbacks passed to children with useCallback. Wrap expensive components with React.memo.
+
+**Images**: Use optimized formats (WebP). Implement lazy loading for off-screen images. Cache with expo-image.
+
+**Bundle Size**: Avoid importing entire libraries. Use modular imports. Check bundle analyzer before adding dependencies.
+
+**Rule**: Profile before optimizing. Use React DevTools Profiler to identify actual bottlenecks, not guessed ones.
+
+---
+
+## 7. Type Safety
+
+### TypeScript Requirements
+- Define all domain models in `/models`
+- Type all component props using interfaces
+- Type API responses in service layer
+- No implicit `any` allowed
+
+**Pragmatic Exceptions**:
+- Expo Router type issues (use `as any` with TODO comment)
+- Third-party libraries without types (create `.d.ts` file)
+- Temporary prototyping (must be removed before PR)
+
+**Rule**: If you write `any`, add a comment explaining why and when it will be fixed.
+
+---
+
+## 8. Styling Strategy
+
+### Choose One Approach
+**Option A - NativeWind**: Tailwind classes for rapid development. Consistent with web teams. Hot reload friendly.
+
+**Option B - StyleSheet**: Platform-optimized performance. Better IDE support. Fine-grained control.
+
+**Rule**: Pick one style system project-wide. Never mix both. Define design tokens (colors, spacing, typography) in `/lib/theme.ts`.
+
+---
+
+## 9. Import Conventions
+
+### Strict Import Rules
+- Use `@/` aliases for all internal imports
+- Group imports: React → External → Internal
+- Export from `index.ts` in each folder
+- Never use relative paths like `../../`
+
+**Enforcement**: If you see `../`, refactor immediately to `@/`.
+
+---
+
+## 10. State Management Decision Tree
+
+**Local UI State** → `useState` in component  
+**Server State** → React Query hooks  
+**Shared UI State** → Context (theme, modals, auth status)  
+**Complex Global State** → Zustand or Redux (only if Context becomes unmaintainable)
+
+**Rule**: Start simple. Add complexity only when pain points emerge. Most apps need only useState + React Query + 1-2 Contexts.
+
+---
+
+## 11. Navigation (Expo Router)
+
+### Type-Safe Navigation Rules
+- Use relative paths for route changes
+- Pass params via search params or route params
+- Use `as any` only for type lag issues (document why)
+- Handle deep links with universal links config
+
+**Rule**: Never hardcode full paths. Use relative navigation for maintainability.
+
+---
+
+## 12. Accessibility Requirements
+
+### Non-Negotiable Standards
+- Add accessibility labels to all interactive elements
+- Specify accessibility roles (button, header, link, etc.)
+- Ensure 4.5:1 color contrast for text
+- Test with screen readers (TalkBack, VoiceOver)
+- Support dynamic text sizing
+
+**Rule**: Accessibility is not optional. Every PR must maintain or improve accessibility score.
+
+---
+
+## 13. Package Management
+
+### Installation Protocol
+- Always use `npx expo install <package>` for compatibility
+- Run `npx expo install --check` before installing new packages
+- Pin exact versions in package.json (no `^` or `~`)
+- Document why each dependency was added
+
+**Rule**: If Expo suggests a different version, use it. Expo SDK compatibility prevents version conflicts.
+
+---
+
+## 14. Security Checklist
+
+- [ ] Use expo-secure-store for tokens/secrets
+- [ ] Validate all user inputs in services
+- [ ] HTTPS only for API calls
+- [ ] Certificate pinning in production builds
+- [ ] Never log sensitive data (tokens, passwords, PII)
+- [ ] Sanitize error messages shown to users
+
+**Rule**: Security is reviewed in every PR. One vulnerability blocks merge.
+
+---
+
+## 15. Code Quality Gates
+
+### Before Committing
+- Functions under 50 lines (hard limit)
+- Components under 250 lines (extract if exceeded)
+- No nesting deeper than 4 levels (use early returns)
+- No duplicate code (DRY after 2nd occurrence)
+- All imports use `@/` aliases
+- No `console.log` statements
+- All TypeScript errors resolved
+
+**Rule**: These gates are enforced by ESLint and pre-commit hooks. No bypassing.
+
+---
+
+## 16. Testing Strategy
+
+### Test Coverage Requirements
+**Unit Tests**: Utils, custom hooks, business logic (80% coverage minimum)  
+**Integration Tests**: Screen flows with mocked APIs (critical paths only)  
+**E2E Tests**: User journeys in staging environment (smoke tests)
+
+**Rule**: Write tests for shared code (hooks, utils, services). Screen tests are optional but recommended for complex flows.
+
+---
+
+## 17. Anti-Patterns (Forbidden)
+
+❌ Screens exceeding 300 lines (extract components)  
+❌ Prop drilling beyond 2 levels (use composition or context)  
+❌ Calling services directly in components (use hooks)  
+❌ Duplicate error logging (log once at boundary)  
+❌ Manual SafeArea/KeyboardAvoidingView in screens (use layouts)  
+❌ Inline styles in render loops (extract to StyleSheet)  
+❌ Mutating state directly (use setState or reducers)  
+❌ Unmemoized callbacks in lists (use useCallback)  
+❌ Missing cleanup in useEffect (return cleanup function)  
+❌ Hardcoded colors/spacing (use theme tokens)
+
+**Rule**: These patterns fail code review automatically. No exceptions.
+
+---
+
+## 18. AI Copilot Compliance
+
+### When AI Suggests Code
+**AI must verify**:
+1. File belongs in correct folder per structure
+2. Models imported from `/models` only
+3. Services use `client.ts` and contain no UI/hooks
+4. Hooks used appropriately (screens can use, but avoid in leaf components unnecessarily)
+5. Layouts handle SafeArea/KeyboardAvoidingView
+6. Imports use `@/` aliases
+7. Folder has `index.ts` export
+8. No duplicate error logging
+9. TypeScript strict compliance
+10. No anti-patterns from section 17
+
+**If any check fails**: Stop, explain violation, suggest compliant alternative, wait for confirmation.
+
+**Rule**: AI cannot proceed with rule-breaking code even if user insists. Guidelines are strict.
+
+---
+
+## Decision Framework
+
+### When Guidelines Conflict with Reality
+1. Does this improve long-term maintainability?
+2. What's the performance impact (measure, don't guess)?
+3. Can the guideline be followed with more effort?
+4. Document deviation in code comment and PR description
+
+**Rule**: Deviations must be justified and approved in code review. "User asked for it" is not a valid justification.
+
+---
+
+## Enforcement
+
+These guidelines are enforced through:
+- ESLint configuration
+- TypeScript strict mode
+- Pre-commit hooks
+- Code review checklist
+- CI/CD pipeline checks
+
+**Violations block merges**. No compromises on architecture, security, or accessibility.
