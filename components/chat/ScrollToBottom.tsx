@@ -1,8 +1,8 @@
 import { memo } from 'react';
 import { TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { 
-  useAnimatedStyle, 
+import Animated, {
+  useAnimatedStyle,
   withTiming,
   useDerivedValue,
   interpolate,
@@ -22,15 +22,14 @@ function ScrollToBottomComponent({ visible, onPress }: ScrollToBottomProps) {
     transform: [{ translateY: interpolate(animatedValue.value, [0, 1], [60, 0]) }],
   }));
 
-
   return (
     <Animated.View
       style={[
         animatedStyle,
-        { 
+        {
           alignItems: 'center',
           pointerEvents: visible ? 'auto' : 'none',
-        }
+        },
       ]}>
       <AnimatedTouchable
         onPress={onPress}

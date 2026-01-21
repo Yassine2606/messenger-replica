@@ -3,7 +3,6 @@ import { AppState, AppStateStatus } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import { useAuthStore } from '@/stores';
-import { useAuth } from './AuthProvider';
 
 interface SocketContextType {
   isConnected: boolean;
@@ -17,14 +16,14 @@ interface SocketProviderProps {
 
 export function SocketProvider({ children }: SocketProviderProps) {
   const token = useAuthStore((state) => state.token);
-  const { isHydrated } = useAuth();
+  const isHydrating = useAuthStore((state) => state.isHydrating);
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = React.useState(false);
 
   // Handle token change - connect or disconnect
   useEffect(() => {
     // Wait for auth to be hydrated
-    if (!isHydrated) {
+    if (isHydrating) {
       return;
     }
 
@@ -58,7 +57,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
       unsubscribeConnect();
       unsubscribeDisconnect();
     };
-  }, [token, isHydrated]);
+  }, [token, isHydrating]);
 
   // Presence ping interval - keeps online status fresh globally
   useEffect(() => {
@@ -82,22 +81,20 @@ export function SocketProvider({ children }: SocketProviderProps) {
     return () => {
       subscription.remove();
     };
-  }, [token]);
+  }, [token, isHydrating]);
 
   const handleAppStateChange = (state: AppStateStatus) => {
     if (state === 'active') {
       // App came to foreground - ensure socket is connected
-      if (!socketClient.isConnected() && token && isHydrated) {
+      if (!socketClient.isConnected() && token && !isHydrating) {
         socketClient.connect(token);
       }
     }
   };
 
-  return (
-    <SocketContext.Provider value={{ isConnected }}>
-      {children}
-    </SocketContext.Provider>
-  );
+  const contextValue = React.useMemo(() => ({ isConnected }), [isConnected]);
+
+  return <SocketContext.Provider value={contextValue}>{children}</SocketContext.Provider>;
 }
 
 export function useSocket() {

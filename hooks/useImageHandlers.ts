@@ -19,35 +19,38 @@ export function useImageHandlers({
   const uploadImageMutation = useUploadImage();
   const sendMutation = useSendMessage(conversationId);
 
-  const handlePickImage = useCallback(async (imageUri?: string) => {
-    // If URI is provided directly (from media picker), use it
-    // Otherwise, launch the image picker
-    let uri: string | null | undefined = imageUri;
-    if (!uri) {
-      uri = await pickImageFromLibrary();
-    }
-    
-    if (uri) {
-      try {
-        const result = await uploadImageMutation.mutateAsync(uri);
-
-        if (result.success) {
-          sendMutation.mutate({
-            conversationId,
-            type: MessageType.IMAGE,
-            mediaUrl: result.file.url,
-            replyToId: replyToMessage?.id,
-          });
-          onReplyCleared();
-        } else {
-          Alert.alert('Error', 'Upload was not successful');
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        Alert.alert('Error', `Failed to upload image: ${errorMsg}`);
+  const handlePickImage = useCallback(
+    async (imageUri?: string) => {
+      // If URI is provided directly (from media picker), use it
+      // Otherwise, launch the image picker
+      let uri: string | null | undefined = imageUri;
+      if (!uri) {
+        uri = await pickImageFromLibrary();
       }
-    }
-  }, [conversationId, replyToMessage?.id, uploadImageMutation, sendMutation, onReplyCleared]);
+
+      if (uri) {
+        try {
+          const result = await uploadImageMutation.mutateAsync(uri);
+
+          if (result.success) {
+            sendMutation.mutate({
+              conversationId,
+              type: MessageType.IMAGE,
+              mediaUrl: result.file.url,
+              replyToId: replyToMessage?.id,
+            });
+            onReplyCleared();
+          } else {
+            Alert.alert('Error', 'Upload was not successful');
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          Alert.alert('Error', `Failed to upload image: ${errorMsg}`);
+        }
+      }
+    },
+    [conversationId, replyToMessage?.id, uploadImageMutation, sendMutation, onReplyCleared]
+  );
 
   const handleTakePhoto = useCallback(async () => {
     const photoUri = await takePhotoWithCamera();

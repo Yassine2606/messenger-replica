@@ -30,7 +30,14 @@ class FileStorage {
   ): { valid: boolean; error?: string } {
     const imageMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     // Accept both audio/m4a and audio/x-m4a (iOS variant)
-    const audioMimeTypes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/m4a', 'audio/x-m4a', 'audio/mp4'];
+    const audioMimeTypes = [
+      'audio/mpeg',
+      'audio/wav',
+      'audio/ogg',
+      'audio/m4a',
+      'audio/x-m4a',
+      'audio/mp4',
+    ];
     const imageSizeLimit = 10 * 1024 * 1024; // 10MB
     const audioSizeLimit = 50 * 1024 * 1024; // 50MB
 
@@ -75,7 +82,11 @@ class FileStorage {
   /**
    * Save file and return URL
    */
-  public async saveFile(buffer: Buffer, mimeType: string, fileType: FileType): Promise<FileUploadResult> {
+  public async saveFile(
+    buffer: Buffer,
+    mimeType: string,
+    fileType: FileType
+  ): Promise<FileUploadResult> {
     const validation = this.validateFile(buffer, mimeType, fileType);
     if (!validation.valid) {
       throw new AppError(400, validation.error || 'Invalid file');

@@ -10,7 +10,14 @@ export enum MessageType {
 }
 
 /**
- * Read Status (sent is for frontend optimistic updates only)
+ * Read Status for message delivery tracking
+ *
+ * Flow for outgoing messages:
+ * 1. SENT - Message accepted by server (optimistic: immediately shown in UI)
+ * 2. DELIVERED - Recipient received the message
+ * 3. READ - Recipient has read the message
+ *
+ * The reads array contains one entry per recipient, tracking their read status
  */
 export enum ReadStatus {
   SENT = 'sent',

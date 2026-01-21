@@ -8,15 +8,15 @@ export const GESTURE = {
   // Pan gesture thresholds
   ACTIVE_OFFSET_X: 15,
   ACTIVE_OFFSET_Y: 10,
-  
+
   // Timestamp reveal
   MAX_TIMESTAMP_DRAG: 80,
   TIMESTAMP_REVEAL_THRESHOLD: 0.5,
-  
+
   // Reply swipe
   MAX_REPLY_SWIPE: 60,
   REPLY_SWIPE_THRESHOLD: 40,
-  
+
   // Long press timing
   LONG_PRESS_DELAY_BUBBLE: 1000,
   LONG_PRESS_DELAY_MESSAGE: 300,

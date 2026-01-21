@@ -13,10 +13,10 @@ import { Conversation } from './conversation';
 export interface UnifiedMessageEvent {
   conversationId: number;
   message: Message;
-  conversationUpdates: Array<{
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**
@@ -25,16 +25,16 @@ export interface UnifiedMessageEvent {
  */
 export interface UnifiedStatusUpdateEvent {
   conversationId: number;
-  updates: Array<{
+  updates: {
     messageId: number;
     userId: number;
     status: ReadStatus;
     readAt?: string;
-  }>;
-  conversationUpdates: Array<{
+  }[];
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**
@@ -44,10 +44,10 @@ export interface UnifiedStatusUpdateEvent {
 export interface UnifiedMessageDeletionEvent {
   conversationId: number;
   deletedMessageIds: number[];
-  conversationUpdates: Array<{
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**

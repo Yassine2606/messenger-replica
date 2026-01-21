@@ -1,4 +1,5 @@
 import { Text, View } from 'react-native';
+import React from 'react';
 import { useTheme } from '@/contexts';
 import type { Conversation } from '@/models';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
@@ -16,13 +17,17 @@ function formatTime(date?: Date | string): string {
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
 }
 
-function ConversationItemComponent({ conversation, currentUserId, otherUserLastSeen }: ConversationItemProps) {
+function ConversationItemComponent({
+  conversation,
+  currentUserId,
+  otherUserLastSeen,
+}: ConversationItemProps) {
   const { colors } = useTheme();
   const otherParticipant = conversation.participants?.find((p) => p.id !== currentUserId);
-  
+
   // Use provided real-time lastSeen or fall back to conversation data
   const realtimeLastSeen = otherUserLastSeen || otherParticipant?.lastSeen;
-  
+
   const lastMessage = conversation.lastMessage;
   const isOwnMessage = lastMessage?.senderId === currentUserId;
 
@@ -52,7 +57,7 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
   const hasUnread = (conversation.unreadCount || 0) > 0;
   const status = getMessageStatus();
   const messagePreview = getMessagePreview();
-  
+
   // Get online status from real-time store
   const statusText = realtimeLastSeen ? formatTimeAgo(realtimeLastSeen) : null;
   const shouldShowStatus = realtimeLastSeen ? shouldShowOnlineIndicator(realtimeLastSeen) : false;
@@ -66,14 +71,23 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
       }}
       className="flex-row items-stretch border-b px-4 py-4">
       {/* Avatar */}
-      <View className="mr-4 relative justify-center">
-        <UserAvatar avatarUrl={otherParticipant?.avatarUrl} userName={otherParticipant?.name} size="lg" />
+      <View className="relative mr-4 justify-center">
+        <UserAvatar
+          avatarUrl={otherParticipant?.avatarUrl}
+          userName={otherParticipant?.name}
+          size="lg"
+        />
         {shouldShowStatus && (
           <View className="absolute bottom-0 right-0 items-center justify-center">
             {statusText === 'Online' ? (
-              <View style={{ backgroundColor: colors.status.online }} className="h-4 w-4 rounded-full border-2 border-white" />
+              <View
+                style={{ backgroundColor: colors.status.online }}
+                className="h-4 w-4 rounded-full border-2 border-white"
+              />
             ) : (
-              <View style={{ borderColor: colors.border.primary, backgroundColor: colors.bg.primary }} className="rounded-full border px-0.5 py-0.5">
+              <View
+                style={{ borderColor: colors.border.primary, backgroundColor: colors.bg.primary }}
+                className="rounded-full border px-0.5 py-0.5">
                 <Text style={{ color: colors.text.secondary }} className="text-xs font-medium">
                   {statusText}
                 </Text>
@@ -86,16 +100,16 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
       {/* Content */}
       <View className="flex-1 justify-center">
         {/* Header: Name + Time */}
-        <View className="flex-row items-center gap-2 mb-1.5">
+        <View className="mb-1.5 flex-row items-center gap-2">
           <Text
             style={{ color: colors.text.primary }}
-            className="text-base font-semibold flex-1 pr-2"
+            className="flex-1 pr-2 text-base font-semibold"
             numberOfLines={1}>
             {otherParticipant?.name || 'Unknown'}
           </Text>
           <Text
             style={{ color: hasUnread ? colors.text.primary : colors.text.secondary }}
-            className={`text-xs flex-shrink-0 ${hasUnread ? 'font-semibold' : ''}`}>
+            className={`flex-shrink-0 text-xs ${hasUnread ? 'font-semibold' : ''}`}>
             {formatTime(lastMessage?.createdAt)}
           </Text>
         </View>
@@ -108,9 +122,9 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
             numberOfLines={1}>
             {messagePreview}
           </Text>
-          
+
           {/* Status and unread indicator container */}
-          <View className="flex-row items-center gap-1.5 flex-shrink-0">
+          <View className="flex-shrink-0 flex-row items-center gap-1.5">
             {isOwnMessage && status && (
               <Text
                 style={{
@@ -126,7 +140,10 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
               </Text>
             )}
             {hasUnread && (
-              <View style={{ backgroundColor: colors.primary }} className="h-2.5 w-2.5 rounded-full" />
+              <View
+                style={{ backgroundColor: colors.primary }}
+                className="h-2.5 w-2.5 rounded-full"
+              />
             )}
           </View>
         </View>
@@ -135,4 +152,12 @@ function ConversationItemComponent({ conversation, currentUserId, otherUserLastS
   );
 }
 
-export { ConversationItemComponent as ConversationItem };
+export const ConversationItem = React.memo(ConversationItemComponent, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if conversation data actually changed
+  return (
+    prevProps.conversation.id === nextProps.conversation.id &&
+    prevProps.conversation.lastMessage?.id === nextProps.conversation.lastMessage?.id &&
+    prevProps.conversation.unreadCount === nextProps.conversation.unreadCount &&
+    prevProps.otherUserLastSeen === nextProps.otherUserLastSeen
+  );
+});

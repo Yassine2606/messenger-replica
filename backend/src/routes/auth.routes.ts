@@ -13,9 +13,7 @@ router.post('/login', validate(loginValidation), (req, res, next) =>
   authController.login(req, res, next)
 );
 
-router.get('/profile', authenticate, (req, res, next) =>
-  authController.getProfile(req, res, next)
-);
+router.get('/profile', authenticate, (req, res, next) => authController.getProfile(req, res, next));
 
 router.put('/profile', authenticate, validate(updateProfileValidation), (req, res, next) =>
   authController.updateProfile(req, res, next)

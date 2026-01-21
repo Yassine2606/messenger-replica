@@ -1,15 +1,15 @@
 import { View, Text } from 'react-native';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  withTiming, 
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
   Easing,
 } from 'react-native-reanimated';
 import { useEffect, useRef } from 'react';
-import { useSocket } from '@/contexts';
-import { useTheme } from '@/contexts';
+import React from 'react';
+import { useSocket, useTheme } from '@/contexts';
 
-export function SocketConnectionStatus() {
+function SocketConnectionStatusComponent() {
   const { isConnected } = useSocket();
   const { colors } = useTheme();
   const opacity = useSharedValue(0);
@@ -71,12 +71,12 @@ export function SocketConnectionStatus() {
           backgroundColor: isConnected ? colors.success : colors.error,
         }}
         className="items-center justify-center py-1">
-        <Text 
-          style={{ color: colors.text.inverted }} 
-          className="text-xs font-medium">
+        <Text style={{ color: colors.text.inverted }} className="text-xs font-medium">
           {isConnected ? '● Connected' : '● Disconnected'}
         </Text>
       </View>
     </Animated.View>
   );
 }
+
+export const SocketConnectionStatus = React.memo(SocketConnectionStatusComponent);

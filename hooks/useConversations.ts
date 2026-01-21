@@ -1,16 +1,19 @@
-import { useQuery, useMutation, useQueryClient, UseQueryResult } from '@tanstack/react-query';
-import { Conversation } from '@/models';
+import { useQuery, useMutation, useQueryClient, UseQueryResult, useInfiniteQuery } from '@tanstack/react-query';
+import { Conversation, PaginatedResponse, GetConversationsOptions } from '@/models';
 import { conversationQueryKeys } from '@/lib/query-keys';
 import { conversationService } from '@/services';
 
 /**
  * Hook to fetch all conversations for current user with real-time updates via socket
  */
-export function useGetConversations(enabled = true): UseQueryResult<Conversation[], Error> {
+export function useGetConversations(
+  options: GetConversationsOptions = {},
+  enabled = true
+): UseQueryResult<PaginatedResponse<Conversation>, Error> {
   return useQuery({
-    queryKey: conversationQueryKeys.list(),
+    queryKey: conversationQueryKeys.list(options),
     queryFn: async () => {
-      return conversationService.getConversations();
+      return conversationService.getConversations(options);
     },
     enabled,
     staleTime: 0, // Always consider stale so invalidateQueries triggers refetch
@@ -42,6 +45,38 @@ export function useGetConversation(
 }
 
 /**
+ * Hook to fetch conversations with infinite scroll/pagination
+ */
+export function useInfiniteConversations(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: conversationQueryKeys.infinite(),
+    queryFn: async ({ pageParam }: { pageParam?: string }) => {
+      return conversationService.getConversations({
+        limit: 20,
+        before: pageParam,
+      });
+    },
+    enabled,
+    initialPageParam: undefined as any,
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.pagination.hasNext) return undefined;
+      // Use the composite cursor from pagination metadata
+      return lastPage.pagination.nextCursor;
+    },
+    getPreviousPageParam: (firstPage) => {
+      if (!firstPage.pagination.hasPrevious) return undefined;
+      // Use the previous cursor for backwards pagination
+      return firstPage.pagination.previousCursor;
+    },
+    staleTime: Infinity, // Invalidate via socket events only
+    gcTime: 5 * 60 * 1000,
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    refetchOnMount: false,
+  });
+}
+
+/**
  * Hook to create or get existing 1:1 conversation
  */
 export function useCreateOrGetConversation() {
@@ -57,7 +92,9 @@ export function useCreateOrGetConversation() {
         if (!old) return [conversation];
         // Replace if exists, otherwise add
         const exists = old.find((c) => c.id === conversation.id);
-        return exists ? old.map((c) => (c.id === conversation.id ? conversation : c)) : [conversation, ...old];
+        return exists
+          ? old.map((c) => (c.id === conversation.id ? conversation : c))
+          : [conversation, ...old];
       });
 
       // Set detail cache

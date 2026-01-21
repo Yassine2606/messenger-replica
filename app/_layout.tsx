@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PortalProvider } from '@gorhom/portal';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { AuthProvider, SocketProvider, ThemeProvider } from '@/contexts';
+import { SocketProvider, ThemeProvider } from '@/contexts';
 import { useSocketEventListener } from '@/hooks';
 
 // Configure Reanimated logger - disable strict mode
@@ -33,8 +33,6 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
-      <Stack.Screen name="auth" />
-      <Stack.Screen name="(tabs)" />
     </Stack>
   );
 }
@@ -53,15 +51,13 @@ export default function Layout() {
         <KeyboardProvider>
           <QueryClientProvider client={queryClient}>
             <ThemeProvider>
-              <AuthProvider>
-                <SocketProvider>
-                  <BottomSheetModalProvider>
-                    <PortalProvider>
-                      <AppContent />
-                    </PortalProvider>
-                  </BottomSheetModalProvider>
-                </SocketProvider>
-              </AuthProvider>
+              <SocketProvider>
+                <BottomSheetModalProvider>
+                  <PortalProvider>
+                    <AppContent />
+                  </PortalProvider>
+                </BottomSheetModalProvider>
+              </SocketProvider>
             </ThemeProvider>
           </QueryClientProvider>
         </KeyboardProvider>

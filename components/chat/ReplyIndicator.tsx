@@ -27,7 +27,7 @@ export function ReplyIndicator({ message, isOwn, onPress }: ReplyIndicatorProps)
           alignSelf: isOwn ? 'flex-end' : 'flex-start',
           maxWidth: 220,
         }}
-        className="rounded-2xl px-3 pt-2 pb-8">
+        className="rounded-2xl px-3 pb-8 pt-2">
         <View className="flex-row items-center gap-2">
           {message.replyTo.type === 'image' ? (
             <>
@@ -58,7 +58,7 @@ export function ReplyIndicator({ message, isOwn, onPress }: ReplyIndicatorProps)
           ) : (
             <Text
               style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
-              className="text-xs flex-shrink"
+              className="flex-shrink text-xs"
               numberOfLines={1}>
               {message.replyTo.content || 'Message'}
             </Text>

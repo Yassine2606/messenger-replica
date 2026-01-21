@@ -10,7 +10,8 @@ import type { User } from '@/models';
 export default function SelectUserScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { data: users = [], isLoading } = useGetAllUsers();
+  const { data: usersResponse, isLoading } = useGetAllUsers();
+  const users = usersResponse?.data || [];
   const createOrGetConversation = useCreateOrGetConversation();
 
   const handleUserPress = async (user: User) => {
@@ -32,7 +33,9 @@ export default function SelectUserScreen() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg.primary }} className="items-center justify-center">
+      <View
+        style={{ flex: 1, backgroundColor: colors.bg.primary }}
+        className="items-center justify-center">
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
@@ -53,9 +56,7 @@ export default function SelectUserScreen() {
         keyExtractor={(item) => item.id.toString()}
         scrollIndicatorInsets={{ right: 1 }}
         renderItem={({ item }) => (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => handleUserPress(item)}>
+          <TouchableOpacity activeOpacity={0.7} onPress={() => handleUserPress(item)}>
             <UserItem user={item} />
           </TouchableOpacity>
         )}

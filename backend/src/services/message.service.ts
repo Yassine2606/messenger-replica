@@ -1,6 +1,6 @@
 import { Message, MessageRead, User, Conversation } from '../models';
 import { AppError } from '../middleware';
-import { MessageDTO, messageToDTO } from '../types';
+import { MessageDTO, messageToDTO, PaginatedResponse, PaginationMetadata } from '../types';
 import { ReadStatus } from '../models/MessageRead';
 import { MessageType } from '../models/Message';
 import { Op, Transaction } from 'sequelize';
@@ -80,7 +80,15 @@ export class MessageService {
   }
 
   /**
-   * Get messages in a conversation with pagination
+   * Get messages in a conversation with cursor-based pagination
+   * 
+   * For inverted FlatList (newest first):
+   * - Initial load: Fetch newest messages (no cursor) → returns in DESC order
+   * - Pagination: Use 'before' cursor to fetch older messages (ID < cursor) → returns in DESC order
+   * 
+   * Cursor semantics:
+   * - before: Get messages with ID < cursor (older messages)
+   * - After initial load, client uses before cursor for all pagination
    */
   async getMessages(
     conversationId: number,
@@ -90,25 +98,16 @@ export class MessageService {
       before?: number;
       after?: number;
     } = {}
-  ): Promise<MessageDTO[]> {
+  ): Promise<PaginatedResponse<MessageDTO>> {
     const limit = Math.min(options.limit || 30, 100);
     const where: any = { conversationId, isDeleted: false };
 
-    // Use cursor-based pagination with ID
-    // before: get messages older than this ID (smaller IDs)
-    // after: get messages newer than this ID (larger IDs)
+    // Cursor-based pagination: only support 'before' for backward pagination (load older messages)
     if (options.before) {
-      // Get messages with ID less than 'before' (older messages)
       where.id = { [Op.lt]: options.before };
-    } else if (options.after) {
-      // Get messages with ID greater than 'after' (newer messages)
-      where.id = { [Op.gt]: options.after };
-    } else {
-      // On initial load with no pagination param, get the newest messages
-      // by limiting and ordering descending, then we'll reverse later
-      // This ensures we load the most recent messages first
     }
 
+    // Fetch one extra message to determine if there are more
     const messages = await Message.findAll({
       where,
       include: [
@@ -134,21 +133,38 @@ export class MessageService {
           attributes: ['id', 'userId', 'status', 'readAt'],
         },
       ],
-      // When before/after are specified, order ASC (chronological)
-      // When neither specified (initial load), order DESC to get newest first
-      order: options.before || options.after ? [['id', 'ASC']] : [['id', 'DESC']],
-      limit,
-      subQuery: false, // Important: avoid Sequelize subquery issues
+      // Return in DESC order (newest first) for inverted FlatList
+      order: [['id', 'DESC']],
+      limit: limit + 1, // Fetch one extra to check for more
+      subQuery: false,
     });
 
-    // Return in appropriate order
-    // For before/after pagination: chronological order (oldest to newest)
-    // For initial load: reverse DESC order to get chronological (oldest to newest)
-    if (!options.before && !options.after) {
-      messages.reverse();
+    // Check if there are more messages
+    const hasMore = messages.length > limit;
+    const actualMessages = hasMore ? messages.slice(0, limit) : messages;
+
+    // Determine pagination metadata
+    let hasPrevious = false; // previousPage = older messages we can load
+    let previousCursor: string | undefined;
+
+    // Check if there are older messages (hasPrevious means we can load more older messages)
+    hasPrevious = hasMore;
+    if (hasPrevious) {
+      // The cursor for loading older messages is the ID of the oldest (last) message in current page
+      previousCursor = actualMessages[actualMessages.length - 1]?.id.toString();
     }
-    
-    return messages.map((m) => messageToDTO(m));
+
+    const pagination: PaginationMetadata = {
+      hasNext: false,
+      hasPrevious,
+      nextCursor: undefined,
+      previousCursor,
+    };
+
+    return {
+      data: actualMessages.map((m) => messageToDTO(m)),
+      pagination,
+    };
   }
 
   /**
@@ -287,7 +303,12 @@ export class MessageService {
   /**
    * Search messages in conversation
    */
-  async searchMessages(conversationId: number, _userId: number, query: string, limit = 20): Promise<MessageDTO[]> {
+  async searchMessages(
+    conversationId: number,
+    _userId: number,
+    query: string,
+    limit = 20
+  ): Promise<MessageDTO[]> {
     const messages = await Message.findAll({
       where: {
         conversationId,
@@ -317,7 +338,10 @@ export class MessageService {
    * Get unread message count for each user in a conversation (batch operation)
    * Returns map of userId -> unreadCount
    */
-  async getUnreadCountsForConversation(conversationId: number, userIds: number[]): Promise<Map<number, number>> {
+  async getUnreadCountsForConversation(
+    conversationId: number,
+    userIds: number[]
+  ): Promise<Map<number, number>> {
     if (userIds.length === 0) {
       return new Map();
     }
@@ -345,7 +369,7 @@ export class MessageService {
     });
 
     const result = new Map<number, number>();
-    userIds.forEach(id => result.set(id, 0));
+    userIds.forEach((id) => result.set(id, 0));
 
     for (const record of counts) {
       const userId = (record as any).userId;

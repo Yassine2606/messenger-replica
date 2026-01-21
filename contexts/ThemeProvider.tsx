@@ -49,14 +49,17 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   const colors: ThemeColors = theme === 'light' ? lightColors : darkColors;
 
+  const contextValue = React.useMemo(
+    () => ({ theme, colors, toggleTheme }),
+    [theme, colors, toggleTheme]
+  );
+
   if (!isHydrated) {
     return null;
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, colors, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={contextValue}>{children}</ThemeContext.Provider>
   );
 }
 

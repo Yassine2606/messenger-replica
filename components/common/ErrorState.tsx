@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/contexts';
 
 interface ErrorStateProps {
   error: Error | null;
@@ -17,25 +18,34 @@ export function ErrorState({
   message,
   compact = false,
 }: ErrorStateProps) {
+  const { colors } = useTheme();
+
   if (!error && !isLoading) {
     return null;
   }
 
-  const errorMessage =
-    message ||
-    error?.message ||
-    'Something went wrong. Please try again.';
+  const errorMessage = message || error?.message || 'Something went wrong. Please try again.';
 
   if (compact) {
     return (
-      <View className="flex-row items-center gap-2 bg-red-50 border-l-4 border-red-500 px-3 py-2">
-        <Ionicons name="alert-circle" size={16} color="#EF4444" />
-        <Text className="flex-1 text-xs text-red-700">{errorMessage}</Text>
+      <View
+        style={{
+          backgroundColor: `${colors.error}15`,
+          borderLeftColor: colors.error,
+        }}
+        className="flex-row items-center gap-2 border-l-4 px-3 py-2">
+        <Ionicons name="alert-circle" size={16} color={colors.error} />
+        <Text style={{ color: colors.text.primary }} className="flex-1 text-xs">
+          {errorMessage}
+        </Text>
         {onRetry && !isLoading && (
           <Pressable
             onPress={onRetry}
-            className="px-2 py-1 bg-red-100 rounded">
-            <Text className="text-xs font-semibold text-red-700">Retry</Text>
+            style={{ backgroundColor: `${colors.error}20` }}
+            className="rounded px-2 py-1">
+            <Text style={{ color: colors.error }} className="text-xs font-semibold">
+              Retry
+            </Text>
           </Pressable>
         )}
       </View>
@@ -43,20 +53,31 @@ export function ErrorState({
   }
 
   return (
-    <View className="flex-1 items-center justify-center bg-gray-50 px-6">
-      <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
-      <Text className="mt-4 text-lg font-semibold text-gray-900 text-center">
+    <View
+      style={{ backgroundColor: colors.bg.secondary }}
+      className="flex-1 items-center justify-center px-6">
+      <View
+        style={{ backgroundColor: colors.bg.tertiary }}
+        className="mb-6 h-20 w-20 items-center justify-center rounded-full">
+        <Ionicons name="alert-circle-outline" size={40} color={colors.error} />
+      </View>
+      <Text
+        style={{ color: colors.text.primary }}
+        className="text-center text-lg font-semibold">
         Unable to load
       </Text>
-      <Text className="mt-2 text-center text-sm text-gray-600">
+      <Text
+        style={{ color: colors.text.secondary }}
+        className="mt-2 text-center text-sm">
         {errorMessage}
       </Text>
       {onRetry && (
         <Pressable
           onPress={onRetry}
           disabled={isLoading}
-          className="mt-6 px-6 py-3 bg-blue-500 rounded-lg">
-          <Text className="text-center font-semibold text-white">
+          style={{ backgroundColor: colors.primary }}
+          className="mt-6 rounded-lg px-6 py-3">
+          <Text style={{ color: colors.text.inverted }} className="text-center font-semibold">
             {isLoading ? 'Retrying...' : 'Try Again'}
           </Text>
         </Pressable>

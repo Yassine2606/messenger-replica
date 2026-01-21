@@ -3,7 +3,13 @@ import { Server, Socket } from 'socket.io';
 import { config } from '../config';
 import { messageService, conversationService, userService } from '../services';
 import { authService } from '../services/auth.service';
-import { UnifiedMessageEvent, UnifiedStatusUpdateEvent, UnifiedMessageDeletionEvent, SocketUserStatusPayload, messageToDTO } from '../types';
+import {
+  UnifiedMessageEvent,
+  UnifiedStatusUpdateEvent,
+  UnifiedMessageDeletionEvent,
+  SocketUserStatusPayload,
+  messageToDTO,
+} from '../types';
 import { AppError } from '../middleware';
 import { ReadStatus } from '../models/MessageRead';
 
@@ -14,6 +20,9 @@ export class SocketManager {
   private userSessions: Map<number, Set<string>> = new Map();
   private activeConversationViewers: Map<number, Set<number>> = new Map();
   private socketConversations: Map<string, Set<number>> = new Map(); // Track which conversations each socket has joined
+
+  // Throttling for high-frequency events
+  private lastTypingEventTime: Map<string, number> = new Map(); // Key: `${conversationId}:${userId}`, Value: timestamp
 
   constructor(httpServer: HTTPServer) {
     this.io = new Server(httpServer, {
@@ -81,7 +90,7 @@ export class SocketManager {
 
       // Presence heartbeat - keeps online status fresh (every 30 seconds)
       socket.on('presence:ping', () => this.handlePresencePing(userId));
-      socket.on('message:send', (data) => this.handleMessageSend(socket, userId, data));
+      socket.on('message:send', (data, ack) => this.handleMessageSend(socket, userId, data, ack));
       socket.on('message:read', (data) => this.handleMessageRead(socket, userId, data));
       socket.on('message:delivered', (data) => this.handleMessageDelivered(socket, userId, data));
       socket.on('message:delete', (data) => this.handleMessageDelete(socket, userId, data));
@@ -93,12 +102,23 @@ export class SocketManager {
   }
 
   /**
-   * Handle message send - UNIFIED EVENT PATTERN
-   * Sends one consolidated event with message + unread counts for each recipient
+   * Handle message send - with Socket.io ACKNOWLEDGMENT
+   * 
+   * Implements the "Ack Pattern" from blueprint:
+   * - Client sends message with handler callback
+   * - Server processes and sends ack immediately
+   * - Much faster than waiting for 'message:new' event to come back
+   * - Client removes loading spinner on ack (not waiting for full broadcast)
    */
-  private async handleMessageSend(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleMessageSend(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any,
+    ack?: (response: { success: boolean; message?: any; error?: string }) => void
+  ): Promise<void> {
     try {
-      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } = data;
+      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } =
+        data;
 
       // Validate required fields
       if (!conversationId || typeof conversationId !== 'number') {
@@ -112,7 +132,10 @@ export class SocketManager {
       }
 
       // Validate content based on type
-      if (type === 'text' && (!content || typeof content !== 'string' || content.trim().length === 0)) {
+      if (
+        type === 'text' &&
+        (!content || typeof content !== 'string' || content.trim().length === 0)
+      ) {
         socket.emit('error', { event: 'message:send', message: 'Text content required' });
         return;
       }
@@ -137,7 +160,7 @@ export class SocketManager {
       // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, userId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Mark messages as delivered/read for online users based on their state
       const activeViewers = this.activeConversationViewers.get(conversationId);
@@ -148,7 +171,7 @@ export class SocketManager {
         if (participant.id && participant.id !== userId) {
           const isOnline = this.userSessions.has(participant.id);
           const isActiveViewer = activeViewers?.has(participant.id);
-          
+
           if (isActiveViewer) {
             messagesToMarkRead.push(participant.id);
           } else if (isOnline) {
@@ -174,13 +197,16 @@ export class SocketManager {
       const messageWithReads = messageToDTO(reloadedMessage);
 
       // Get unread counts for all participants (SINGLE QUERY instead of N+1)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create unified event with message + per-recipient unread counts
       const unifiedEvent: UnifiedMessageEvent = {
         conversationId,
         message: messageWithReads,
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -188,15 +214,31 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('message:unified', unifiedEvent);
+
+      // ⭐ Send acknowledgment callback - client removes spinner immediately
+      // No need to wait for broadcast event
+      if (ack) {
+        ack({
+          success: true,
+          message: messageWithReads,
+        });
+      }
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Failed to send message';
       socket.emit('error', {
         event: 'message:send',
         message,
       });
+      // Send error ack if provided
+      if (ack) {
+        ack({
+          success: false,
+          error: message,
+        });
+      }
     }
   }
 
@@ -204,10 +246,14 @@ export class SocketManager {
    * Handle message read status update - BATCHED UNIFIED EVENT
    * Combines multiple read updates into one event with unread count changes
    */
-  private async handleMessageRead(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleMessageRead(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any
+  ): Promise<void> {
     try {
       const { messageId, messageIds, conversationId } = data;
-      
+
       // Validate conversation ID
       if (!conversationId || typeof conversationId !== 'number') {
         socket.emit('error', { event: 'message:read', message: 'Valid conversation ID required' });
@@ -222,7 +268,7 @@ export class SocketManager {
       }
 
       // Validate message IDs
-      if (!Array.isArray(idsToMark) || !idsToMark.every(id => typeof id === 'number' && id > 0)) {
+      if (!Array.isArray(idsToMark) || !idsToMark.every((id) => typeof id === 'number' && id > 0)) {
         socket.emit('error', { event: 'message:read', message: 'Invalid message IDs' });
         return;
       }
@@ -232,22 +278,25 @@ export class SocketManager {
       // Get conversation to find all participants
       const conversation = await conversationService.getConversation(conversationId, userId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Get unread counts for all participants (SINGLE QUERY)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create batched unified event with all status updates
       const readAt = new Date().toISOString();
       const unifiedEvent: UnifiedStatusUpdateEvent = {
         conversationId,
-        updates: idsToMark.map(id => ({
+        updates: idsToMark.map((id) => ({
           messageId: id,
           userId,
           status: ReadStatus.READ,
           readAt,
         })),
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -255,7 +304,7 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('status:unified', unifiedEvent);
     } catch (error) {
@@ -271,7 +320,11 @@ export class SocketManager {
    * Handle message delivered status update - UNIFIED EVENT
    * Triggered when client explicitly marks a message as delivered
    */
-  private async handleMessageDelivered(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleMessageDelivered(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any
+  ): Promise<void> {
     try {
       const { messageId } = data;
 
@@ -290,10 +343,13 @@ export class SocketManager {
       // Get conversation for unread count calculation
       const conversation = await conversationService.getConversation(conversationId, userId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Get unread counts
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create unified event
       const readAt = new Date().toISOString();
@@ -307,7 +363,7 @@ export class SocketManager {
             readAt,
           },
         ],
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -315,11 +371,12 @@ export class SocketManager {
 
       // Emit to conversation
       this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('status:unified', unifiedEvent);
     } catch (error) {
-      const message = error instanceof AppError ? error.message : 'Failed to mark message as delivered';
+      const message =
+        error instanceof AppError ? error.message : 'Failed to mark message as delivered';
       socket.emit('error', {
         event: 'message:delivered',
         message,
@@ -331,7 +388,11 @@ export class SocketManager {
    * Handle message delete - UNIFIED EVENT
    * Sends consolidated event when a message is deleted
    */
-  private async handleMessageDelete(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleMessageDelete(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any
+  ): Promise<void> {
     try {
       const { messageId, conversationId } = data;
 
@@ -341,23 +402,29 @@ export class SocketManager {
       }
 
       if (!conversationId || typeof conversationId !== 'number') {
-        socket.emit('error', { event: 'message:delete', message: 'Valid conversation ID required' });
+        socket.emit('error', {
+          event: 'message:delete',
+          message: 'Valid conversation ID required',
+        });
         return;
       }
 
       // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, userId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Get unread counts for all participants
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create unified deletion event
       const unifiedEvent: UnifiedMessageDeletionEvent = {
         conversationId,
         deletedMessageIds: [messageId],
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -365,7 +432,7 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('message:deleted', unifiedEvent);
     } catch (error) {
@@ -381,7 +448,11 @@ export class SocketManager {
    * Handle conversation join (user enters chat) - UNIFIED PATTERN
    * Auto-marks unread messages as read, sends consolidated event
    */
-  private async handleConversationJoin(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleConversationJoin(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any
+  ): Promise<void> {
     try {
       const { conversationId } = data;
 
@@ -415,22 +486,25 @@ export class SocketManager {
 
         if (markedMessages.length > 0) {
           const participants = conversation.participants || [];
-          const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+          const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
           // Get unread counts ONCE for all participants
-          const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+          const unreadCounts = await messageService.getUnreadCountsForConversation(
+            conversationId,
+            participantIds
+          );
 
           // Create single unified event with all marked messages + updated unread counts
           const readAt = new Date().toISOString();
           const unifiedEvent: UnifiedStatusUpdateEvent = {
             conversationId,
-            updates: markedMessages.map(messageId => ({
+            updates: markedMessages.map((messageId) => ({
               messageId,
               userId,
               status: ReadStatus.READ,
               readAt,
             })),
-            conversationUpdates: participantIds.map(id => ({
+            conversationUpdates: participantIds.map((id) => ({
               userId: id,
               unreadCount: unreadCounts.get(id) || 0,
             })),
@@ -458,7 +532,11 @@ export class SocketManager {
   /**
    * Handle conversation leave
    */
-  private async handleConversationLeave(socket: AuthenticatedSocket, userId: number, data: any): Promise<void> {
+  private async handleConversationLeave(
+    socket: AuthenticatedSocket,
+    userId: number,
+    data: any
+  ): Promise<void> {
     try {
       const { conversationId } = data;
 
@@ -473,7 +551,10 @@ export class SocketManager {
       let hasOtherSocketInConversation = false;
       if (userSockets) {
         for (const socketId of userSockets) {
-          if (socketId !== socket.id && this.socketConversations.get(socketId)?.has(conversationId)) {
+          if (
+            socketId !== socket.id &&
+            this.socketConversations.get(socketId)?.has(conversationId)
+          ) {
             hasOtherSocketInConversation = true;
             break;
           }
@@ -524,7 +605,7 @@ export class SocketManager {
   private async handleDisconnect(socket: AuthenticatedSocket, userId: number): Promise<void> {
     // Get conversations this socket was in
     const socketRooms = this.socketConversations.get(socket.id);
-    
+
     // Clean up active viewers for each conversation
     if (socketRooms) {
       const userSockets = this.userSessions.get(userId);
@@ -533,13 +614,16 @@ export class SocketManager {
         let hasOtherSocketInConversation = false;
         if (userSockets) {
           for (const socketId of userSockets) {
-            if (socketId !== socket.id && this.socketConversations.get(socketId)?.has(conversationId)) {
+            if (
+              socketId !== socket.id &&
+              this.socketConversations.get(socketId)?.has(conversationId)
+            ) {
               hasOtherSocketInConversation = true;
               break;
             }
           }
         }
-        
+
         // Only remove from active viewers if no other socket is viewing
         if (!hasOtherSocketInConversation) {
           const viewers = this.activeConversationViewers.get(conversationId);
@@ -551,7 +635,7 @@ export class SocketManager {
           }
         }
       }
-      
+
       // Clean up socket conversation tracking
       this.socketConversations.delete(socket.id);
     }
@@ -587,36 +671,42 @@ export class SocketManager {
       await messageService.markAsDelivered(messageIds, userId);
 
       // Group by conversation and create unified events
-      const conversationGroups = undeliveredMessages.reduce((acc, msg) => {
-        if (!acc[msg.conversationId]) {
-          acc[msg.conversationId] = [];
-        }
-        acc[msg.conversationId].push(msg.id);
-        return acc;
-      }, {} as Record<number, number[]>);
+      const conversationGroups = undeliveredMessages.reduce(
+        (acc, msg) => {
+          if (!acc[msg.conversationId]) {
+            acc[msg.conversationId] = [];
+          }
+          acc[msg.conversationId].push(msg.id);
+          return acc;
+        },
+        {} as Record<number, number[]>
+      );
 
       // Send unified event per conversation
       for (const [convIdStr, msgIds] of Object.entries(conversationGroups)) {
         const conversationId = Number(convIdStr);
-        
+
         try {
           const conversation = await conversationService.getConversation(conversationId, userId);
           const participants = conversation.participants || [];
-          const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+          const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
           // Get unread counts once per conversation
-          const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+          const unreadCounts = await messageService.getUnreadCountsForConversation(
+            conversationId,
+            participantIds
+          );
 
           const readAt = new Date().toISOString();
           const unifiedEvent: UnifiedStatusUpdateEvent = {
             conversationId,
-            updates: msgIds.map(messageId => ({
+            updates: msgIds.map((messageId) => ({
               messageId,
               userId,
               status: ReadStatus.DELIVERED,
               readAt,
             })),
-            conversationUpdates: participantIds.map(id => ({
+            conversationUpdates: participantIds.map((id) => ({
               userId: id,
               unreadCount: unreadCounts.get(id) || 0,
             })),
@@ -633,6 +723,25 @@ export class SocketManager {
   }
 
   /**
+   * Throttle an event to prevent firing too frequently
+   * Used for high-frequency events like typing, status updates
+   * @param key Unique key for throttling (conversationId:userId)
+   * @param delayMs Minimum delay between events in milliseconds
+   * @returns true if event should fire, false if throttled
+   */
+  private shouldThrottle(key: string, delayMs: number, timeMap: Map<string, number>): boolean {
+    const now = Date.now();
+    const lastTime = timeMap.get(key) || 0;
+    const elapsed = now - lastTime;
+
+    if (elapsed >= delayMs) {
+      timeMap.set(key, now);
+      return false; // Should NOT throttle - allow event
+    }
+    return true; // Should throttle - block event
+  }
+
+  /**
    * Handle typing start
    */
   private handleTypingStart(socket: AuthenticatedSocket, userId: number, data: any): void {
@@ -641,7 +750,13 @@ export class SocketManager {
       if (!conversationId || typeof conversationId !== 'number') {
         return;
       }
-      
+
+      // Throttle typing events - only allow once per 1000ms per user per conversation
+      const throttleKey = `${conversationId}:${userId}`;
+      if (this.shouldThrottle(throttleKey, 1000, this.lastTypingEventTime)) {
+        return; // Throttled - don't emit
+      }
+
       // Only emit to others in the room (not to sender)
       socket.to(`conversation:${conversationId}`).emit('typing:start', {
         conversationId,
@@ -662,7 +777,7 @@ export class SocketManager {
       if (!conversationId || typeof conversationId !== 'number') {
         return;
       }
-      
+
       // Only emit to others in the room (not to sender)
       socket.to(`conversation:${conversationId}`).emit('typing:stop', {
         conversationId,
@@ -695,7 +810,7 @@ export class SocketManager {
 
       // Get all conversations for this user to find who cares about their status
       const userConversations = await conversationService.getConversations(userId);
-      const allConversationIds = userConversations.map(c => c.id);
+      const allConversationIds = userConversations.data.map((c: any) => c.id);
 
       // Only broadcast to conversations where this user is a participant
       for (const conversationId of allConversationIds) {
@@ -729,12 +844,16 @@ export class SocketManager {
    * Broadcast unified message event to conversation
    * Called by REST API after message is created
    */
-  async broadcastUnifiedMessage(conversationId: number, messageId: number, senderId: number): Promise<void> {
+  async broadcastUnifiedMessage(
+    conversationId: number,
+    messageId: number,
+    senderId: number
+  ): Promise<void> {
     try {
       // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, senderId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Mark messages as delivered/read for online users based on their state
       const activeViewers = this.activeConversationViewers.get(conversationId);
@@ -745,7 +864,7 @@ export class SocketManager {
         if (participant.id && participant.id !== senderId) {
           const isOnline = this.userSessions.has(participant.id);
           const isActiveViewer = activeViewers?.has(participant.id);
-          
+
           if (isActiveViewer) {
             messagesToMarkRead.push(participant.id);
           } else if (isOnline) {
@@ -771,13 +890,16 @@ export class SocketManager {
       const messageWithReads = messageToDTO(reloadedMessage);
 
       // Get unread counts for all participants (SINGLE QUERY instead of N+1)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create unified event with message + per-recipient unread counts
       const unifiedEvent: UnifiedMessageEvent = {
         conversationId,
         message: messageWithReads,
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -785,7 +907,7 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('message:unified', unifiedEvent);
     } catch (error) {
@@ -798,21 +920,28 @@ export class SocketManager {
    * Broadcast unified message deletion event to conversation
    * Called by REST API after message is deleted
    */
-  async broadcastUnifiedMessageDeletion(conversationId: number, messageId: number, deleterId: number): Promise<void> {
+  async broadcastUnifiedMessageDeletion(
+    conversationId: number,
+    messageId: number,
+    deleterId: number
+  ): Promise<void> {
     try {
       // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, deleterId);
       const participants = conversation.participants || [];
-      const participantIds = participants.map(p => p.id).filter(Boolean) as number[];
+      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
 
       // Get unread counts for all participants
-      const unreadCounts = await messageService.getUnreadCountsForConversation(conversationId, participantIds);
+      const unreadCounts = await messageService.getUnreadCountsForConversation(
+        conversationId,
+        participantIds
+      );
 
       // Create unified deletion event
       const unifiedEvent: UnifiedMessageDeletionEvent = {
         conversationId,
         deletedMessageIds: [messageId],
-        conversationUpdates: participantIds.map(id => ({
+        conversationUpdates: participantIds.map((id) => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
@@ -820,7 +949,7 @@ export class SocketManager {
 
       // Send single consolidated event to entire conversation
       this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
-      
+
       // Also broadcast to global conversations room for conversation list updates
       this.io.to('conversations').emit('message:deleted', unifiedEvent);
     } catch (error) {

@@ -12,11 +12,8 @@ const upload = multer({
   },
 });
 
-router.post(
-  '/',
-  authenticate,
-  upload.single('file'),
-  (req, res, next) => uploadController.uploadFile(req, res, next)
+router.post('/', authenticate, upload.single('file'), (req, res, next) =>
+  uploadController.uploadFile(req, res, next)
 );
 
 export default router;

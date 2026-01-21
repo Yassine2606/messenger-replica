@@ -155,7 +155,9 @@ export default function RegisterScreen() {
           }}
           onPress={handleRegister}
           disabled={registerMutation.isPending}>
-          <Text style={{ color: colors.text.inverted }} className="text-center text-base font-semibold">
+          <Text
+            style={{ color: colors.text.inverted }}
+            className="text-center text-base font-semibold">
             {registerMutation.isPending ? 'Creating account...' : 'Sign Up'}
           </Text>
         </TouchableOpacity>

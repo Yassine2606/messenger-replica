@@ -15,14 +15,14 @@ export default function ProfileScreen() {
   const { data: user, isLoading } = useProfile();
   const logoutMutation = useLogout();
   const updateProfileMutation = useUpdateProfile();
-  
+
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [formData, setFormData] = useState({ name: '', status: '', avatarUrl: '' });
 
   const openEditModal = () => {
     if (user) {
-      setFormData({ 
-        name: user.name, 
+      setFormData({
+        name: user.name,
         status: user.status || '',
         avatarUrl: user.avatarUrl || '',
       });
@@ -71,7 +71,9 @@ export default function ProfileScreen() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg.primary }} className="items-center justify-center">
+      <View
+        style={{ flex: 1, backgroundColor: colors.bg.primary }}
+        className="items-center justify-center">
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
@@ -80,7 +82,11 @@ export default function ProfileScreen() {
   if (!user) {
     return (
       <View
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: colors.bg.primary }}
+        style={{
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          backgroundColor: colors.bg.primary,
+        }}
         className="flex-1 bg-white">
         <View className="flex-1 items-center justify-center px-6">
           <Text style={{ color: colors.text.primary }} className="text-xl font-semibold">
@@ -106,7 +112,12 @@ export default function ProfileScreen() {
   return (
     <>
       <ScrollView
-        style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top, paddingBottom: insets.bottom + 20 }}
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg.primary,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom + 20,
+        }}
         contentContainerStyle={{ flexGrow: 1 }}
         scrollEnabled={true}
         showsVerticalScrollIndicator={false}>
@@ -121,14 +132,13 @@ export default function ProfileScreen() {
                 Manage your account
               </Text>
             </View>
-            <View className="flex-row gap-2 ml-4">
+            <View className="ml-4 flex-row gap-2">
               {/* Theme Toggle Button */}
               <TouchableOpacity
                 onPress={toggleTheme}
                 style={{ backgroundColor: colors.bg.secondary }}
                 className="h-10 w-10 items-center justify-center rounded-full"
-                activeOpacity={0.7}
-                title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
+                activeOpacity={0.7}>
                 <Ionicons
                   name={theme === 'light' ? 'moon' : 'sunny'}
                   size={20}
@@ -159,13 +169,11 @@ export default function ProfileScreen() {
           {/* Info Cards */}
           <View className="mb-8 gap-3">
             <ProfileCard icon="mail-outline" label="Email" value={user.email} />
-            {user.status && (
-              <ProfileCard icon="text-outline" label="Status" value={user.status} />
-            )}
+            {user.status && <ProfileCard icon="text-outline" label="Status" value={user.status} />}
           </View>
 
           {/* Action Buttons */}
-          <View className="gap-3 mt-auto">
+          <View className="mt-auto gap-3">
             <Button
               label="Edit Profile"
               onPress={openEditModal}
@@ -200,7 +208,7 @@ export default function ProfileScreen() {
           </View>
 
           {/* Form Fields */}
-          <View className="gap-4 mb-6">
+          <View className="mb-6 gap-4">
             <FormField
               label="Full Name"
               value={formData.name}

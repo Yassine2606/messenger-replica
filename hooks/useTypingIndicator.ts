@@ -5,15 +5,20 @@ interface UseTypingIndicatorProps {
   conversationId: number;
 }
 
+/**
+ * Simplified typing indicator hook leveraging backend throttling
+ * 
+ * The backend throttles duplicate typing:start events at 1000ms per user per conversation,
+ * so we don't need client-side deduplication. This significantly simplifies the hook and
+ * reduces memory overhead.
+ */
 export function useTypingIndicator({ conversationId }: UseTypingIndicatorProps) {
-  const isTypingRef = useRef(false); // Use ref to avoid stale closure
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleTextChange = useCallback(
     (text: string) => {
-      // Send typing indicator only if not already typing
-      if (!isTypingRef.current && text.length > 0) {
-        isTypingRef.current = true;
+      // Send typing indicator on any text input (backend handles throttling)
+      if (text.length > 0) {
         socketClient.startTyping(conversationId);
       }
 
@@ -22,13 +27,12 @@ export function useTypingIndicator({ conversationId }: UseTypingIndicatorProps) 
         clearTimeout(typingTimeoutRef.current);
       }
 
-      // Stop typing after 500ms of inactivity
+      // Stop typing after 500ms of inactivity (UX preference)
       typingTimeoutRef.current = setTimeout(() => {
-        isTypingRef.current = false;
         socketClient.stopTyping(conversationId);
       }, 500);
     },
-    [conversationId] // ✅ No isTyping dependency - eliminates closure stale issue
+    [conversationId]
   );
 
   return { handleTextChange, typingTimeoutRef };

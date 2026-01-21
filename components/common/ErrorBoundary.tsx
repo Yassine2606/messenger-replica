@@ -34,11 +34,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     if (this.state.hasError) {
       return (
         this.props.fallback || (
-          <View className="items-center justify-center bg-red-50 p-4 rounded-lg border border-red-200">
-            <Text className="text-red-900 font-semibold text-sm">
-              {this.props.componentName ? `Error in ${this.props.componentName}` : 'Something went wrong'}
+          <View className="items-center justify-center rounded-lg border border-red-200 bg-red-50 p-4">
+            <Text className="text-sm font-semibold text-red-900">
+              {this.props.componentName
+                ? `Error in ${this.props.componentName}`
+                : 'Something went wrong'}
             </Text>
-            <Text className="text-red-700 text-xs mt-1">
+            <Text className="mt-1 text-xs text-red-700">
               {this.state.error?.message || 'An unexpected error occurred'}
             </Text>
           </View>

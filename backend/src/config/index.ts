@@ -21,7 +21,7 @@ export const config = {
     password: process.env.DB_PASSWORD || 'postgres',
   },
   cors: {
-    origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : '*',
+    origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : '*',
   },
   storage: {
     type: process.env.STORAGE_TYPE || 'local',

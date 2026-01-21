@@ -2,7 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, Pressable, ScrollView, Platform } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { useTheme } from '@/contexts';
 
 interface ModalProps {
@@ -34,7 +39,7 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
     if (visible) {
       // Show modal and animate in
       setDisplayModal(true);
-      
+
       // Delay animation start on Android to ensure modal is rendered
       const delay = Platform.OS === 'android' ? 50 : 0;
       const timer = setTimeout(() => {
@@ -47,7 +52,7 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
           easing: Easing.out(Easing.ease),
         });
       }, delay);
-      
+
       return () => clearTimeout(timer);
     } else {
       // Animate out first, then hide modal
@@ -59,12 +64,12 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
         duration: 200,
         easing: Easing.in(Easing.ease),
       });
-      
+
       // Hide modal after animation completes
       const timer = setTimeout(() => {
         setDisplayModal(false);
       }, 200);
-      
+
       return () => clearTimeout(timer);
     }
   }, [visible, backdropOpacity, contentTranslateY]);
@@ -72,11 +77,7 @@ export function CustomModal({ visible, title, onClose, children }: ModalProps) {
   return (
     <Modal visible={displayModal} animationType="none" transparent statusBarTranslucent>
       {/* Backdrop */}
-      <Animated.View
-        style={[
-          { flex: 1, backgroundColor: colors.overlay },
-          backdropStyle,
-        ]}>
+      <Animated.View style={[{ flex: 1, backgroundColor: colors.overlay }, backdropStyle]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
 

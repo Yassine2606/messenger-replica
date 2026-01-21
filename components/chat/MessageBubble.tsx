@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useRef, useMemo, useEffect } from 'react';
+import React, { useCallback, useRef, useMemo } from 'react';
 import { Text, View, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -29,7 +29,10 @@ interface MessageBubbleProps {
   onReply?: (message: Message) => void;
   onShowMenu?: (coordinates: BubbleCoordinates | null) => void;
   onContextMenu?: (message: Message, coordinates?: { pageX: number; pageY: number }) => void;
-  onImagePress?: (imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => void;
+  onImagePress?: (
+    imageUri: string,
+    layout?: { x: number; y: number; width: number; height: number }
+  ) => void;
   onScrollToReply?: (message: Message) => void;
   // Shared animated values for synchronized timestamp drag across all messages of one side
   sharedRowTranslateX?: SharedValue<number>;
@@ -53,7 +56,10 @@ function isSameSender(msg1?: Message, msg2?: Message): boolean {
   return msg1?.senderId === msg2?.senderId;
 }
 
-function isWithinMinute(date1: Date | string | undefined, date2: Date | string | undefined): boolean {
+function isWithinMinute(
+  date1: Date | string | undefined,
+  date2: Date | string | undefined
+): boolean {
   if (!date1 || !date2) return false;
   const d1 = typeof date1 === 'string' ? new Date(date1).getTime() : new Date(date1).getTime();
   const d2 = typeof date2 === 'string' ? new Date(date2).getTime() : new Date(date2).getTime();
@@ -141,11 +147,11 @@ function MessageBubbleComponent({
   sharedTimestampOpacity: propsSharedTimestampOpacity,
 }: MessageBubbleProps) {
   const { colors } = useTheme();
-  
+
   // Use provided shared values, or fallback to local ones if not provided
   const localRowTranslateX = useSharedValue(0);
   const localTimestampOpacity = useSharedValue(0);
-  
+
   const sharedRowTranslateX = propsSharedRowTranslateX || localRowTranslateX;
   const sharedTimestampOpacity = propsSharedTimestampOpacity || localTimestampOpacity;
 
@@ -162,7 +168,8 @@ function MessageBubbleComponent({
       isWithinMinute(previousMessage?.createdAt, message.createdAt);
 
     const next =
-      isSameSender(message, nextMessage) && isWithinMinute(message.createdAt, nextMessage?.createdAt);
+      isSameSender(message, nextMessage) &&
+      isWithinMinute(message.createdAt, nextMessage?.createdAt);
 
     return {
       isGroupedWithPrevious: prev,
@@ -205,12 +212,17 @@ function MessageBubbleComponent({
     .onUpdate((event) => {
       const direction = isOwn ? -1 : 1;
       if ((isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0)) {
-        bubbleTranslateX.value = direction * Math.min(Math.abs(event.translationX), GESTURE.MAX_REPLY_SWIPE);
-        replyIconOpacity.value = Math.min(Math.abs(event.translationX) / GESTURE.MAX_REPLY_SWIPE, 1);
+        bubbleTranslateX.value =
+          direction * Math.min(Math.abs(event.translationX), GESTURE.MAX_REPLY_SWIPE);
+        replyIconOpacity.value = Math.min(
+          Math.abs(event.translationX) / GESTURE.MAX_REPLY_SWIPE,
+          1
+        );
       }
     })
     .onEnd((event) => {
-      const isValidSwipeDirection = (isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0);
+      const isValidSwipeDirection =
+        (isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0);
       if (isValidSwipeDirection && Math.abs(event.translationX) > GESTURE.REPLY_SWIPE_THRESHOLD) {
         scheduleOnRN(handleReply);
       }
@@ -269,7 +281,9 @@ function MessageBubbleComponent({
   if (message.isDeleted) {
     return (
       <View className={`mb-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
-        <View style={{ backgroundColor: colors.bg.tertiary }} className="max-w-[75%] rounded-2xl px-3 py-2">
+        <View
+          style={{ backgroundColor: colors.bg.tertiary }}
+          className="max-w-[75%] rounded-2xl px-3 py-2">
           <Text style={{ color: colors.text.tertiary }} className="text-sm italic">
             Message deleted
           </Text>
@@ -287,22 +301,23 @@ function MessageBubbleComponent({
     <View style={{ marginBottom: 4 }}>
       {/* Row-level gesture detector - wraps the entire row */}
       <GestureDetector gesture={rowGesture}>
-        <Animated.View 
+        <Animated.View
           style={rowAnimatedStyle}
           className={`relative flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
-          
           {/* Avatar - only show for other people's messages when not grouped with previous */}
           {!isOwn && !isGroupedWithPrevious && (
             <View className="mr-2 justify-end">
-              <UserAvatar avatarUrl={message.sender?.avatarUrl} userName={message.sender?.name} size="sm" />
+              <UserAvatar
+                avatarUrl={message.sender?.avatarUrl}
+                userName={message.sender?.name}
+                size="sm"
+              />
             </View>
           )}
-          
+
           {/* Spacer when avatar is hidden (grouped with previous) */}
-          {!isOwn && isGroupedWithPrevious && (
-            <View className="mr-2 w-9" />
-          )}
-          
+          {!isOwn && isGroupedWithPrevious && <View className="mr-2 w-9" />}
+
           {/* Reply icon - behind bubble */}
           <Animated.View
             style={[
@@ -321,10 +336,14 @@ function MessageBubbleComponent({
           {/* Message bubble with gestures for reply and long press for context menu */}
           <GestureDetector gesture={combinedBubbleGesture}>
             <Animated.View style={bubbleAnimatedStyle}>
-              <ReplyIndicator message={message} isOwn={isOwn} onPress={() => onScrollToReply?.(message)} />
+              <ReplyIndicator
+                message={message}
+                isOwn={isOwn}
+                onPress={() => onScrollToReply?.(message)}
+              />
               {message.type === 'image' && message.mediaUrl ? (
                 <>
-                  <Animated.View 
+                  <Animated.View
                     ref={imageLayoutRef as any}
                     style={{
                       width: 160,
@@ -336,30 +355,46 @@ function MessageBubbleComponent({
                     <Pressable
                       onPress={() => {
                         if (imageLayoutRef.current && 'measure' in imageLayoutRef.current) {
-                          (imageLayoutRef.current as any).measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-                            onImagePress?.(message.mediaUrl!, {
-                              x: pageX,
-                              y: pageY,
-                              width,
-                              height,
-                            });
-                          });
+                          (imageLayoutRef.current as any).measure(
+                            (
+                              x: number,
+                              y: number,
+                              width: number,
+                              height: number,
+                              pageX: number,
+                              pageY: number
+                            ) => {
+                              onImagePress?.(message.mediaUrl!, {
+                                x: pageX,
+                                y: pageY,
+                                width,
+                                height,
+                              });
+                            }
+                          );
                         } else {
                           onImagePress?.(message.mediaUrl!);
                         }
                       }}
                       style={{ flex: 1 }}>
                       <Image
-                        source={{ uri: message.mediaUrl.startsWith('http') ? message.mediaUrl : `${API_BASE_URL}${message.mediaUrl}` }}
+                        source={{
+                          uri: message.mediaUrl.startsWith('http')
+                            ? message.mediaUrl
+                            : `${API_BASE_URL}${message.mediaUrl}`,
+                        }}
                         style={{ flex: 1, width: '100%', height: '100%' }}
                         contentFit="cover"
                         cachePolicy="memory-disk"
+                        transition={200}
                       />
                     </Pressable>
                   </Animated.View>
                   {message.content && (
                     <View
-                      style={{ backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg }}
+                      style={{
+                        backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg,
+                      }}
                       className="mt-1 rounded-2xl px-3 py-2">
                       <Text
                         style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
@@ -407,28 +442,23 @@ function MessageBubbleComponent({
   );
 }
 
-export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps) => {
-  // Fast bailout: same reference
-  if (prevProps.message === nextProps.message) return true;
-
-  // Custom comparison - avoid expensive JSON.stringify
-  const messageEqual =
+/**
+ * Memoized wrapper for MessageBubble to prevent unnecessary re-renders during scroll.
+ * Uses custom comparison to check only message content and key properties.
+ */
+const MessageBubble = React.memo(MessageBubbleComponent, (prevProps, nextProps) => {
+  // Return true if props are equal (NO re-render), false if they differ (re-render)
+  return (
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
+    prevProps.message.mediaUrl === nextProps.message.mediaUrl &&
     prevProps.message.isDeleted === nextProps.message.isDeleted &&
     prevProps.message.reads?.length === nextProps.message.reads?.length &&
-    (prevProps.message.reads?.length === 0 ||
-     prevProps.message.reads?.some((read) =>
-       !nextProps.message.reads?.some((r) => r.userId === read.userId)
-     ) === false);
-
-  return (
-    messageEqual &&
     prevProps.isOwn === nextProps.isOwn &&
-    prevProps.previousMessage?.id === nextProps.previousMessage?.id &&
-    prevProps.nextMessage?.id === nextProps.nextMessage?.id &&
-    prevProps.onImagePress === nextProps.onImagePress &&
-    prevProps.onReply === nextProps.onReply &&
-    prevProps.onContextMenu === nextProps.onContextMenu
+    prevProps.showTimeSeparator === nextProps.showTimeSeparator
   );
 });
+
+MessageBubble.displayName = 'MessageBubble';
+
+export { MessageBubble };

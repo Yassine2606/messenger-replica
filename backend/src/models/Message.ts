@@ -25,9 +25,15 @@ export interface MessageAttributes {
   updatedAt?: Date;
 }
 
-export interface MessageCreationAttributes extends Optional<MessageAttributes, 'id' | 'isDeleted' | 'createdAt' | 'updatedAt'> {}
+export interface MessageCreationAttributes extends Optional<
+  MessageAttributes,
+  'id' | 'isDeleted' | 'createdAt' | 'updatedAt'
+> {}
 
-export class Message extends Model<MessageAttributes, MessageCreationAttributes> implements MessageAttributes {
+export class Message
+  extends Model<MessageAttributes, MessageCreationAttributes>
+  implements MessageAttributes
+{
   public id!: number;
   public conversationId!: ForeignKey<Conversation['id']>;
   public senderId!: ForeignKey<User['id']>;

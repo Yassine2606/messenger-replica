@@ -5,8 +5,15 @@ export class ConversationController {
   async getConversations(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
-      const conversations = await conversationService.getConversations(userId);
-      res.status(200).json(conversations);
+      const { limit, before, after } = req.query;
+
+      const result = await conversationService.getConversations(userId, {
+        limit: limit ? Number(limit) : 20,
+        before: before ? String(before) : undefined,
+        after: after ? String(after) : undefined,
+      });
+
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }
@@ -16,7 +23,10 @@ export class ConversationController {
     try {
       const userId = req.user!.userId;
       const { conversationId } = req.params;
-      const conversation = await conversationService.getConversation(Number(conversationId), userId);
+      const conversation = await conversationService.getConversation(
+        Number(conversationId),
+        userId
+      );
       res.status(200).json(conversation);
     } catch (error) {
       next(error);

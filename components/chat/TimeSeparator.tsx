@@ -12,11 +12,11 @@ export function TimeSeparator({ date }: TimeSeparatorProps) {
 
   return (
     <View className="flex-row items-center gap-3 py-3">
-      <View style={{ backgroundColor: colors.border.primary }} className="flex-1 h-px" />
+      <View style={{ backgroundColor: colors.border.primary }} className="h-px flex-1" />
       <Text style={{ color: colors.text.secondary }} className="text-xs font-medium">
         {getDateLabel(date)}
       </Text>
-      <View style={{ backgroundColor: colors.border.primary }} className="flex-1 h-px" />
+      <View style={{ backgroundColor: colors.border.primary }} className="h-px flex-1" />
     </View>
   );
 }

@@ -16,7 +16,14 @@ interface ChatHeaderProps {
   userAvatarUrl?: string;
 }
 
-export function ChatHeader({ title, userId, lastSeen, onBackPress, userName, userAvatarUrl }: ChatHeaderProps) {
+export function ChatHeader({
+  title,
+  userId,
+  lastSeen,
+  onBackPress,
+  userName,
+  userAvatarUrl,
+}: ChatHeaderProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   // Always call the hook, it handles the conditional logic internally
@@ -55,14 +62,18 @@ export function ChatHeader({ title, userId, lastSeen, onBackPress, userName, use
         </View>
 
         <View className="flex-1">
-          <Text style={{ color: colors.text.primary }} className="text-lg font-semibold" numberOfLines={1}>
+          <Text
+            style={{ color: colors.text.primary }}
+            className="text-lg font-semibold"
+            numberOfLines={1}>
             {title}
           </Text>
           {shouldShow && statusText && (
             <View className="mt-0.5 flex-row items-center">
               <View
                 style={{
-                  backgroundColor: statusText === 'Online' ? colors.status.online : colors.status.offline,
+                  backgroundColor:
+                    statusText === 'Online' ? colors.status.online : colors.status.offline,
                 }}
                 className="mr-1.5 h-2 w-2 rounded-full"
               />

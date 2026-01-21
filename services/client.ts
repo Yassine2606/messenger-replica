@@ -73,8 +73,7 @@ class ApiClient {
         // Check if we should retry
         const shouldRetry =
           config.__retryCount < this.retryConfig.maxRetries &&
-          (this.isRetryableStatus(error.response?.status) ||
-            this.isRetryableError(error.code));
+          (this.isRetryableStatus(error.response?.status) || this.isRetryableError(error.code));
 
         if (shouldRetry) {
           config.__retryCount += 1;
@@ -86,8 +85,8 @@ class ApiClient {
 
           console.warn(
             `[ApiClient] Retrying ${config.method?.toUpperCase()} ${config.url} ` +
-            `(attempt ${config.__retryCount}/${this.retryConfig.maxRetries}) ` +
-            `after ${delay}ms`,
+              `(attempt ${config.__retryCount}/${this.retryConfig.maxRetries}) ` +
+              `after ${delay}ms`,
             `Status: ${error.response?.status || error.code}`
           );
 
@@ -132,11 +131,7 @@ class ApiClient {
   /**
    * Calculate exponential backoff delay
    */
-  private calculateBackoffDelay(
-    retryCount: number,
-    baseDelay: number,
-    multiplier: number
-  ): number {
+  private calculateBackoffDelay(retryCount: number, baseDelay: number, multiplier: number): number {
     const delay = baseDelay * Math.pow(multiplier, retryCount - 1);
     // Add jitter to prevent thundering herd
     const jitter = Math.random() * delay * 0.1;
@@ -144,7 +139,7 @@ class ApiClient {
   }
 
   /**
-   * Set authentication token (called by AuthProvider/AuthService)
+   * Set authentication token (called by auth store initialization)
    */
   setToken(token: string): void {
     this.token = token;

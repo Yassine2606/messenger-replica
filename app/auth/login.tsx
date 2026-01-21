@@ -50,7 +50,8 @@ export default function LoginScreen() {
       } else if (status === 401) {
         errorMessage = 'Invalid email or password.';
       } else if (status === 400) {
-        errorMessage = error?.response?.data?.error || 'Invalid input. Please check your credentials.';
+        errorMessage =
+          error?.response?.data?.error || 'Invalid input. Please check your credentials.';
       }
 
       Alert.alert('Login Failed', errorMessage);
@@ -108,7 +109,9 @@ export default function LoginScreen() {
           }}
           onPress={handleLogin}
           disabled={loginMutation.isPending}>
-          <Text style={{ color: colors.text.inverted }} className="text-center text-base font-semibold">
+          <Text
+            style={{ color: colors.text.inverted }}
+            className="text-center text-base font-semibold">
             {loginMutation.isPending ? 'Signing in...' : 'Sign In'}
           </Text>
         </TouchableOpacity>

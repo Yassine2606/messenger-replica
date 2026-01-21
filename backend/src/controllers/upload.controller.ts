@@ -21,11 +21,7 @@ export class UploadController {
         throw new AppError(400, 'Invalid file type. Must be "image" or "audio"');
       }
 
-      const result = await fileStorage.saveFile(
-        req.file.buffer,
-        req.file.mimetype,
-        fileType
-      );
+      const result = await fileStorage.saveFile(req.file.buffer, req.file.mimetype, fileType);
 
       res.status(200).json({
         success: true,

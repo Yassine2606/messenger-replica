@@ -22,11 +22,11 @@ export class UploadService {
     try {
       // Extract filename from URI
       const filename = uri.split('/').pop() || 'file';
-      
+
       // Determine mime type based on file extension
       const extension = filename.split('.').pop()?.toLowerCase();
       let mimeType = 'application/octet-stream';
-      
+
       if (fileType === 'image') {
         if (extension === 'jpg' || extension === 'jpeg') mimeType = 'image/jpeg';
         else if (extension === 'png') mimeType = 'image/png';
@@ -39,24 +39,24 @@ export class UploadService {
         else if (extension === 'm4a') mimeType = 'audio/m4a';
         else if (extension === 'aac') mimeType = 'audio/aac';
       }
-      
+
       // Get file info from filesystem using legacy API
       const FileSystem = FileSystemLegacy as any;
       const fileInfo = await FileSystem.getInfoAsync(uri);
-      
+
       if (!fileInfo.exists) {
         throw new Error(`File not found: ${uri}`);
       }
-      
+
       // Get auth token
       const token = await AsyncStorage.getItem('auth_token');
       if (!token) {
         throw new Error('No auth token found');
       }
-      
+
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
       const uploadUrl = `${apiUrl}/upload`;
-      
+
       // Create FormData manually for React Native compatibility
       const formData = new FormData();
       formData.append('file', {
@@ -65,30 +65,29 @@ export class UploadService {
         name: filename,
       } as any);
       formData.append('fileType', fileType);
-      
+
       // Fetch with timeout (30 seconds for large file uploads)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
-      
+
       // Use URI-based FormData for both iOS and Android
       // React Native's FormData handles file:// URIs natively
       console.log('Upload using URI-based FormData, mimeType:', mimeType);
       const requestBody = formData;
-      
-      
+
       const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: requestBody,
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
       const responseText = await response.text();
       console.log('Upload response:', response.status, responseText);
-      
+
       if (!response.ok) {
         let errorData;
         try {
@@ -98,7 +97,7 @@ export class UploadService {
         }
         throw new Error(errorData.message || `Upload failed with status ${response.status}`);
       }
-      
+
       const result = JSON.parse(responseText);
       console.log('Upload successful, file URL:', result.file?.url);
       return result;

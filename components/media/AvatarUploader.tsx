@@ -33,7 +33,7 @@ export function AvatarUploader({
   const handlePickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: "images",
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -67,12 +67,12 @@ export function AvatarUploader({
   // Convert file:// to proper iOS format if needed
   const getImageSource = () => {
     if (!displayUri) return undefined;
-    
+
     // For iOS, handle file:// URIs properly
     if (Platform.OS === 'ios' && displayUri.startsWith('file://')) {
       return { uri: displayUri, cache: 'force-cache' as const };
     }
-    
+
     return { uri: displayUri };
   };
 
@@ -100,7 +100,7 @@ export function AvatarUploader({
         <TouchableOpacity
           onPress={handlePickImage}
           disabled={uploading || isLoading}
-          className="absolute bottom-0 right-0 h-8 w-8 items-center justify-center rounded-full bg-blue-500 border-2 border-white shadow-md"
+          className="absolute bottom-0 right-0 h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-blue-500 shadow-md"
           activeOpacity={0.7}>
           {uploading ? (
             <ActivityIndicator color="#FFFFFF" size="small" />

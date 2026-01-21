@@ -9,9 +9,15 @@ export interface ConversationAttributes {
   updatedAt?: Date;
 }
 
-export interface ConversationCreationAttributes extends Optional<ConversationAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+export interface ConversationCreationAttributes extends Optional<
+  ConversationAttributes,
+  'id' | 'createdAt' | 'updatedAt'
+> {}
 
-export class Conversation extends Model<ConversationAttributes, ConversationCreationAttributes> implements ConversationAttributes {
+export class Conversation
+  extends Model<ConversationAttributes, ConversationCreationAttributes>
+  implements ConversationAttributes
+{
   public id!: number;
   public lastMessageId?: number;
   public readonly createdAt!: Date;

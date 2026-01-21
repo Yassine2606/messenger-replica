@@ -5,6 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { useTheme } from '@/contexts';
+import { useAudioStore } from '@/stores';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -40,14 +41,26 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   nextMessage,
   onContextMenu,
 }: VoiceMessagePlayerProps) {
+  // Subscribe to audio store to know if THIS message is currently playing
+  const currentlyPlayingMessageId = useAudioStore((state) => state.currentlyPlayingMessageId);
+  const setCurrentlyPlaying = useAudioStore((state) => state.setCurrentlyPlaying);
+  
+  const isCurrentlyPlaying = message?.id ? currentlyPlayingMessageId === message.id : false;
+
   const isSameSender = useMemo(() => {
     return message?.senderId === previousMessage?.senderId;
   }, [message?.senderId, previousMessage?.senderId]);
 
   const isWithinMinute = useMemo(() => {
     if (!message?.createdAt || !previousMessage?.createdAt) return false;
-    const d1 = typeof message.createdAt === 'string' ? new Date(message.createdAt).getTime() : new Date(message.createdAt).getTime();
-    const d2 = typeof previousMessage.createdAt === 'string' ? new Date(previousMessage.createdAt).getTime() : new Date(previousMessage.createdAt).getTime();
+    const d1 =
+      typeof message.createdAt === 'string'
+        ? new Date(message.createdAt).getTime()
+        : new Date(message.createdAt).getTime();
+    const d2 =
+      typeof previousMessage.createdAt === 'string'
+        ? new Date(previousMessage.createdAt).getTime()
+        : new Date(previousMessage.createdAt).getTime();
     return Math.abs(d1 - d2) < 60000;
   }, [message?.createdAt, previousMessage?.createdAt]);
 
@@ -58,7 +71,7 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   const player = useAudioPlayer({ uri: audioUrl }, { downloadFirst: true });
   const status = useAudioPlayerStatus(player);
 
-  const playbackProgress = useSharedValue(0);
+  const localPlaybackProgress = useSharedValue(0);
   const containerWidth = useSharedValue(200);
   const hasStartedPlayingShared = useSharedValue(0);
   const [measuredWidth, setMeasuredWidth] = useState(200);
@@ -72,6 +85,17 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
     }).catch(() => {});
   }, []);
 
+  // When this player should stop (another message started playing)
+  useEffect(() => {
+    if (message?.id && !isCurrentlyPlaying && status.playing) {
+      try {
+        player.pause();
+      } catch (error) {
+        console.warn('Error pausing audio:', error);
+      }
+    }
+  }, [isCurrentlyPlaying, message?.id, player, status.playing]);
+
   useEffect(() => {
     if (!status.isLoaded || status.duration === 0) return;
 
@@ -82,9 +106,9 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
     } else {
       playbackStartTimeRef.current = null;
       const currentProgress = Math.min(1, Math.max(0, status.currentTime / status.duration));
-      playbackProgress.value = currentProgress;
+      localPlaybackProgress.value = currentProgress;
     }
-  }, [status.playing, status.isLoaded, status.duration, playbackProgress, hasStartedPlayingShared]);
+  }, [status.playing, status.isLoaded, status.duration, localPlaybackProgress, hasStartedPlayingShared]);
 
   useEffect(() => {
     if (!status.playing || !playbackStartTimeRef.current || status.duration === 0) return;
@@ -93,19 +117,19 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
       if (!playbackStartTimeRef.current) return;
 
       const elapsedMs = Date.now() - playbackStartTimeRef.current;
-      const expectedPosition = playbackStartPositionRef.current + (elapsedMs / 1000);
+      const expectedPosition = playbackStartPositionRef.current + elapsedMs / 1000;
       const expectedProgress = Math.min(1, Math.max(0, expectedPosition / status.duration));
 
-      playbackProgress.value = expectedProgress;
+      localPlaybackProgress.value = expectedProgress;
     };
 
     const interval = setInterval(updateProgress, 50);
     return () => clearInterval(interval);
-  }, [status.playing, status.duration, playbackProgress]);
+  }, [status.playing, status.duration, localPlaybackProgress]);
 
   useEffect(() => {
     if (status.didJustFinish && player && status.isLoaded) {
-      playbackProgress.value = withTiming(1, { duration: 0 });
+      localPlaybackProgress.value = withTiming(1, { duration: 0 });
       setTimeout(() => {
         try {
           player.pause();
@@ -113,26 +137,32 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
         } catch (error) {
           console.warn('Error resetting audio:', error);
         }
-        playbackProgress.value = 0;
+        localPlaybackProgress.value = 0;
         hasStartedPlayingShared.value = 0;
         playbackStartTimeRef.current = null;
         playbackStartPositionRef.current = 0;
+        if (message?.id) {
+          setCurrentlyPlaying(null);
+        }
       }, 50);
     }
-  }, [status.didJustFinish, status.isLoaded, player, playbackProgress, hasStartedPlayingShared]);
+  }, [status.didJustFinish, status.isLoaded, player, localPlaybackProgress, hasStartedPlayingShared, message?.id, setCurrentlyPlaying]);
 
   const handlePlayPause = useCallback(() => {
-    if (!player || !status.isLoaded) return;
+    if (!player || !status.isLoaded || !message?.id) return;
     try {
       if (status.playing) {
         player.pause();
+        setCurrentlyPlaying(null);
       } else {
+        // Stop any other playing audio
+        setCurrentlyPlaying(message.id);
         player.play();
       }
     } catch (error) {
       console.warn('Audio playback error:', error);
     }
-  }, [status.playing, status.isLoaded, player]);
+  }, [status.playing, status.isLoaded, player, message?.id, setCurrentlyPlaying]);
 
   const handleLongPress = useCallback(() => {
     if (!message) return;
@@ -158,13 +188,13 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
         const progress = Math.max(0, Math.min(1, locationX / currentContainerWidth));
         const seekTime = progress * (duration / 1000);
 
-        playbackProgress.value = progress;
+        localPlaybackProgress.value = progress;
         player.seekTo(seekTime);
       } catch (error) {
         console.warn('Error seeking audio:', error);
       }
     },
-    [duration, player, playbackProgress, status.isLoaded, containerWidth]
+    [duration, player, localPlaybackProgress, status.isLoaded, containerWidth]
   );
 
   const formatTime = useCallback((seconds: number) => {
@@ -176,9 +206,18 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   const durationSeconds = useMemo(() => duration / 1000, [duration]);
 
   const { colors } = useTheme();
-  const bgColor = useMemo(() => (isOwn ? colors.audio.own.bg : colors.audio.other.bg), [isOwn, colors]);
-  const playButtonColor = useMemo(() => (isOwn ? colors.audio.own.playButtonColor : colors.audio.other.playButtonColor), [isOwn, colors]);
-  const textColor = useMemo(() => (isOwn ? colors.audio.own.text : colors.audio.other.text), [isOwn, colors]);
+  const bgColor = useMemo(
+    () => (isOwn ? colors.audio.own.bg : colors.audio.other.bg),
+    [isOwn, colors]
+  );
+  const playButtonColor = useMemo(
+    () => (isOwn ? colors.audio.own.playButtonColor : colors.audio.other.playButtonColor),
+    [isOwn, colors]
+  );
+  const textColor = useMemo(
+    () => (isOwn ? colors.audio.own.text : colors.audio.other.text),
+    [isOwn, colors]
+  );
 
   const formattedDuration = useMemo(
     () => formatTime(durationSeconds),
@@ -186,7 +225,7 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   );
 
   const indicatorStyle = useAnimatedStyle(() => {
-    const progress = Math.min(1, Math.max(0, playbackProgress.value));
+    const progress = Math.min(1, Math.max(0, localPlaybackProgress.value));
     const translateX = progress * containerWidth.value;
     return {
       transform: [{ translateX }],
@@ -198,13 +237,15 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 7, marginBottom: 2 }}>
       {!isOwn && !isGroupedWithPrevious && (
         <View className="mb-2">
-          <UserAvatar avatarUrl={message?.sender?.avatarUrl} userName={message?.sender?.name} size="sm" />
+          <UserAvatar
+            avatarUrl={message?.sender?.avatarUrl}
+            userName={message?.sender?.name}
+            size="sm"
+          />
         </View>
       )}
 
-      {!isOwn && isGroupedWithPrevious && (
-        <View className="mb-2 w-9" />
-      )}
+      {!isOwn && isGroupedWithPrevious && <View className="mb-2 w-9" />}
 
       <GestureDetector gesture={longPressGesture}>
         <View
@@ -217,8 +258,7 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
             paddingHorizontal: 10,
             paddingVertical: 8,
             width: 200,
-          }}
-        >
+          }}>
           <Pressable
             onPress={handlePlayPause}
             disabled={!status.isLoaded}
@@ -234,7 +274,11 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
             }}>
             <Ionicons
               name={
-                !status.isLoaded ? 'hourglass-outline' : status.playing ? 'pause-sharp' : 'play-sharp'
+                !status.isLoaded
+                  ? 'hourglass-outline'
+                  : status.playing
+                    ? 'pause-sharp'
+                    : 'play-sharp'
               }
               size={18}
               color={playButtonColor}
@@ -256,9 +300,10 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
               position: 'relative',
               paddingHorizontal: 2,
               justifyContent: 'center',
-              backgroundColor: isOwn ? 'rgba(255, 255, 255, 0.3)' : colors.audio.other.waveColor + '33',
-            }}
-          >
+              backgroundColor: isOwn
+                ? 'rgba(255, 255, 255, 0.3)'
+                : colors.audio.other.waveColor + '33',
+            }}>
             <Animated.View
               style={[
                 {
@@ -281,8 +326,7 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
               fontWeight: '500',
               color: textColor,
               minWidth: 32,
-            }}
-          >
+            }}>
             {formattedDuration}
           </Text>
         </View>

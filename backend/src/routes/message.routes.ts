@@ -11,9 +11,7 @@ router.post(
   authenticate,
   validate([
     body('conversationId').isInt().withMessage('Conversation ID required'),
-    body('type')
-      .isIn(['text', 'image', 'audio'])
-      .withMessage('Invalid message type'),
+    body('type').isIn(['text', 'image', 'audio']).withMessage('Invalid message type'),
     body('content').optional().isString(),
     body('mediaUrl').optional().isString(),
     body('mediaMimeType').optional().isString(),
@@ -41,7 +39,8 @@ router.delete(
   '/:messageId',
   authenticate,
   validate([param('messageId').isInt().withMessage('Invalid message ID')]),
-  (req: Request, res: Response, next: NextFunction) => messageController.deleteMessage(req, res, next)
+  (req: Request, res: Response, next: NextFunction) =>
+    messageController.deleteMessage(req, res, next)
 );
 
 export default router;

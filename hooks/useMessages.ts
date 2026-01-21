@@ -1,5 +1,11 @@
-import { useQuery, useMutation, useQueryClient, UseQueryResult, useInfiniteQuery, UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Message, MessageType, User } from '@/models';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  UseQueryResult,
+  useInfiniteQuery,
+} from '@tanstack/react-query';
+import { Message, MessageType, User, PaginatedResponse } from '@/models';
 import { messageQueryKeys } from '@/lib/query-keys';
 import { messageService } from '@/services';
 import { useMessageStore, useAuthStore } from '@/stores';
@@ -17,7 +23,7 @@ export function useGetMessages(
   conversationId: number | null,
   options: UseGetMessagesOptions = {},
   enabled = true
-) {
+): UseQueryResult<PaginatedResponse<Message>, Error> {
   return useQuery({
     queryKey: messageQueryKeys.byConversation(conversationId || 0),
     queryFn: async () => {
@@ -33,27 +39,31 @@ export function useGetMessages(
 }
 
 /**
- * Hook to fetch messages with infinite scroll/pagination
+ * Hook to fetch messages with infinite scroll/pagination for inverted FlatList
+ * 
+ * For inverted FlatList (newest messages first on screen):
+ * - Initial load: No cursor → backend returns newest messages in DESC order
+ * - Pagination: User scrolls down (toward old messages) → onEndReached fires
+ * - Use getPreviousPageParam to load older messages using 'before' cursor
+ * - Pages array grows: [newest, ..., oldest] but items display reversed
  */
-export function useInfiniteMessages(
-  conversationId: number | null,
-  enabled = true
-) {
+export function useInfiniteMessages(conversationId: number | null, enabled = true) {
   return useInfiniteQuery({
     queryKey: messageQueryKeys.byConversation(conversationId || 0),
-    queryFn: async ({ pageParam }: { pageParam?: number }) => {
+    queryFn: async ({ pageParam }: { pageParam?: string | number }) => {
       if (!conversationId) throw new Error('Conversation ID is required');
       return messageService.getMessages(conversationId, {
         limit: 20,
-        before: pageParam,
+        before: pageParam ? Number(pageParam) : undefined,
       });
     },
     enabled: enabled && !!conversationId,
     initialPageParam: undefined as any,
-    getNextPageParam: (lastPage) => {
-      if (!lastPage || lastPage.length < 20) return undefined;
-      // Use the ID of the oldest message as the 'before' cursor
-      return lastPage[0]?.id;
+    getNextPageParam: () => undefined, // Not used - only paginate backward
+    getPreviousPageParam: (firstPage) => {
+      if (!firstPage.pagination.hasPrevious) return undefined;
+      // Use previousCursor to load older messages
+      return firstPage.pagination.previousCursor;
     },
     staleTime: Infinity,
     gcTime: 5 * 60 * 1000,
@@ -71,97 +81,111 @@ interface SendMessageInput {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaDuration?: number;
-  waveform?: number[]; // Audio waveform for audio messages
+  waveform?: number[];
   replyToId?: number;
 }
 
 /**
- * Hook to send a message with optimistic updates and real-time confirmation
+ * Hook to send a message with optimistic updates.
+ *
+ * Flow:
+ * 1. onMutate: Add optimistic message to Zustand store with 'sending' status
+ * 2. API call in background
+ * 3. onSuccess: Update message to 'sent' and add to React Query cache
+ * 4. onError: Update message to 'failed' in store
+ *
+ * The chat screen combines real messages from cache + optimistic from store.
  */
 export function useSendMessage(conversationId: number) {
   const queryClient = useQueryClient();
-  const { addOptimisticMessage, confirmOptimisticMessage, removeOptimisticMessage } = useMessageStore();
+  const { addOptimisticMessage, updateMessageStatus, removeOptimisticMessage } =
+    useMessageStore();
   const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: async (input: SendMessageInput) => {
-      const message = await messageService.sendMessage(input);
-      return message;
+      return messageService.sendMessage(input);
     },
     onMutate: async (input) => {
-      // Cancel any outgoing refetches
-      await queryClient.cancelQueries({
-        queryKey: messageQueryKeys.byConversation(conversationId),
-      });
-
-      // Create plain sender object (avoid Zustand proxy issues)
       const tempId = `temp-${Date.now()}-${Math.random()}`;
-      let sender: Partial<User> | undefined;
-      if (user) {
-        sender = {
-          id: Number(user.id),
-          name: String(user.name),
-          email: String(user.email),
-        };
-      }
-      
-      // Create optimistic message - store will assign unique negative ID
+
+      // Build sender object
+      const sender: Partial<User> = {
+        id: user?.id ? Number(user.id) : 0,
+        name: user?.name ? String(user.name) : 'Unknown',
+        email: user?.email ? String(user.email) : '',
+      };
+
+      // Create optimistic message
       const optimisticMessage: Message = {
-        id: 0, // Placeholder, will be overwritten by store
+        id: 0, // Store will assign negative ID
         conversationId,
         senderId: user?.id ? Number(user.id) : 0,
         sender,
-        type: input.type as MessageType,
-        content: input.content ? String(input.content) : undefined,
-        mediaUrl: input.mediaUrl ? String(input.mediaUrl) : undefined,
-        mediaMimeType: input.mediaMimeType ? String(input.mediaMimeType) : undefined,
-        mediaDuration: input.mediaDuration ? Number(input.mediaDuration) : undefined,
-        waveform: input.waveform ? Array.from(input.waveform) : undefined,
-        replyToId: input.replyToId ? Number(input.replyToId) : undefined,
+        type: input.type,
+        content: input.content,
+        mediaUrl: input.mediaUrl,
+        mediaMimeType: input.mediaMimeType,
+        mediaDuration: input.mediaDuration,
+        waveform: input.waveform,
+        replyToId: input.replyToId,
         isDeleted: false,
         reads: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
-      // Add to store (which will assign unique negative ID)
-      addOptimisticMessage(tempId, optimisticMessage, conversationId);
+      // Add to store with 'sending' status
+      addOptimisticMessage(tempId, optimisticMessage);
 
-      // Get the actual optimistic message with correct ID from store
-      const { getOptimisticMessage } = useMessageStore.getState();
-      const actualOptimisticMessage = getOptimisticMessage(tempId) || optimisticMessage;
-
-      // Don't update cache - the chat screen will combine real messages from cache
-      // with optimistic messages from the store to avoid duplication
-      
-      return { tempId, optimisticMessage: actualOptimisticMessage };
+      return { tempId };
     },
-    onSuccess: (message, input, context) => {
-      if (context) {
-        // Confirm optimistic message - remove from store and add actual message to cache
-        confirmOptimisticMessage(context.tempId, message);
+    onSuccess: (serverMessage, input, context) => {
+      if (!context) return;
 
-        // Update cache with actual message
-        queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
-          if (!old || !old.pages) return { pages: [[message]], pageParams: [] };
-          const lastPageIndex = old.pages.length - 1;
-          const newPages = [...old.pages];
-          if (lastPageIndex >= 0 && Array.isArray(newPages[lastPageIndex])) {
-            // Add the actual message from server
-            newPages[lastPageIndex] = [...newPages[lastPageIndex], message];
-          } else {
-            newPages.push([message]);
+      // Add server message to React Query cache
+      queryClient.setQueryData(
+        messageQueryKeys.byConversation(conversationId),
+        (old: any) => {
+          if (!old) {
+            return {
+              pages: [{ data: [serverMessage], pagination: { hasNext: false, hasPrevious: false } }],
+              pageParams: [undefined],
+            };
           }
-          return { ...old, pages: newPages };
-        });
-      }
+
+          // Handle infinite query pages structure
+          if (old.pages && Array.isArray(old.pages)) {
+            const newPages = [...old.pages];
+            const lastPageIdx = newPages.length - 1;
+
+            // Append to last page
+            if (lastPageIdx >= 0 && newPages[lastPageIdx]?.data) {
+              const lastPageData = newPages[lastPageIdx].data || [];
+              const exists = lastPageData.some((m: Message) => m.id === serverMessage.id);
+              if (!exists) {
+                newPages[lastPageIdx] = {
+                  ...newPages[lastPageIdx],
+                  data: [...lastPageData, serverMessage],
+                };
+              }
+            }
+
+            return { ...old, pages: newPages };
+          }
+
+          return old;
+        }
+      );
+
+      // Remove optimistic message from store
+      removeOptimisticMessage(context.tempId);
     },
     onError: (error, input, context) => {
-      console.error('onError: Failed to send message:', error);
-      if (context) {
-        // Revert optimistic update from store
-        removeOptimisticMessage(context.tempId);
-      }
+      if (!context) return;
+      // Message stays in store with failed status for retry UI
+      // User can retry or dismiss
+      console.error('Failed to send message:', error);
     },
   });
 }
@@ -177,14 +201,22 @@ export function useDeleteMessage(conversationId: number) {
       await messageService.deleteMessage(messageId);
     },
     onSuccess: (_, messageId) => {
-      // Update cache for infinite query (which uses pages structure)
+      // Update cache for infinite query (which uses pages structure with PaginatedResponse)
       queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
         if (!old || !old.pages) return old;
-        
-        const newPages = old.pages.map((page: Message[]) =>
-          page.map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m))
-        );
-        
+
+        const newPages = old.pages.map((page: any) => {
+          if (page?.data && Array.isArray(page.data)) {
+            // PaginatedResponse structure
+            return {
+              ...page,
+              data: page.data.map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m)),
+            };
+          }
+          // Legacy array structure
+          return (page || []).map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m));
+        });
+
         return { ...old, pages: newPages };
       });
     },

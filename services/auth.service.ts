@@ -45,11 +45,7 @@ export class AuthService {
   /**
    * Update user profile
    */
-  async updateProfile(data: {
-    name?: string;
-    avatarUrl?: string;
-    status?: string;
-  }): Promise<User> {
+  async updateProfile(data: { name?: string; avatarUrl?: string; status?: string }): Promise<User> {
     return apiClient.put<User>('/auth/profile', data);
   }
 

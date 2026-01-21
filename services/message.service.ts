@@ -1,6 +1,19 @@
 import { apiClient } from './client';
-import { Message, MessageType } from '@/models';
+import { Message, MessageType, PaginatedResponse } from '@/models';
 
+/**
+ * CURSOR-BASED PAGINATION
+ * 
+ * Per the Socket.io + React Query blueprint:
+ * - Use message IDs or timestamps as cursors (not page numbers)
+ * - 'before': Load messages older than this ID/timestamp
+ * - 'after': Load messages newer than this ID/timestamp
+ * 
+ * For inverted FlatList:
+ * - Initial load: No cursor → get newest messages in DESC order
+ * - User scrolls down (toward old messages) → use 'before' cursor
+ * - Pagination offset is the ID of the last message in current list
+ */
 export interface SendMessageData {
   conversationId: number;
   type: MessageType;
@@ -14,8 +27,8 @@ export interface SendMessageData {
 
 export interface GetMessagesOptions {
   limit?: number;
-  before?: number;
-  after?: number;
+  before?: number; // Load messages before this message ID (older messages)
+  after?: number;  // Load messages after this message ID (newer messages)
 }
 
 export class MessageService {
@@ -27,12 +40,20 @@ export class MessageService {
   }
 
   /**
-   * Get messages in a conversation with pagination
+   * Get messages in a conversation with CURSOR-BASED pagination
+   * 
+   * @param conversationId Target conversation
+   * @param options Pagination options:
+   *   - limit: Number of messages to fetch (default 20)
+   *   - before: Fetch older messages (use last message ID)
+   *   - after: Fetch newer messages (use first message ID)
+   * 
+   * @returns PaginatedResponse with messages + cursors for next/prev pages
    */
   async getMessages(
     conversationId: number,
     options: GetMessagesOptions = {}
-  ): Promise<Message[]> {
+  ): Promise<PaginatedResponse<Message>> {
     const params = new URLSearchParams();
     if (options.limit) params.append('limit', options.limit.toString());
     if (options.before) params.append('before', options.before.toString());
@@ -40,8 +61,8 @@ export class MessageService {
 
     const queryString = params.toString();
     const url = `/messages/conversation/${conversationId}${queryString ? `?${queryString}` : ''}`;
-    
-    return apiClient.get<Message[]>(url);
+
+    return apiClient.get<PaginatedResponse<Message>>(url);
   }
 
   /**

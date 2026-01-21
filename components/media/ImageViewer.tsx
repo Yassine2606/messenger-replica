@@ -56,9 +56,17 @@ type ImageDimensions = { width: number; height: number };
  * - Loading and error states
  * - Accessibility support
  */
-export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDimensions }: ImageViewerProps) {
+export function ImageViewer({
+  visible,
+  imageUri,
+  onClose,
+  sourceLayout,
+  imageDimensions,
+}: ImageViewerProps) {
   // State for image dimensions and loading
-  const [imageSize, setImageSize] = React.useState<ImageDimensions>(imageDimensions || { width: 0, height: 0 });
+  const [imageSize, setImageSize] = React.useState<ImageDimensions>(
+    imageDimensions || { width: 0, height: 0 }
+  );
   const [isLoading, setIsLoading] = React.useState(!imageDimensions); // Only load if dimensions not provided
   const [isError, setIsError] = React.useState(false);
   const [isClosing, setIsClosing] = React.useState(false);
@@ -72,7 +80,7 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDim
   const savedTranslateY = useSharedValue(0);
   const backdropOpacity = useSharedValue(0);
   const isPinching = useSharedValue(false);
-  
+
   // Shared element transition values
   const uiOpacity = useSharedValue(0); // Controls backdrop and close button visibility
 
@@ -285,7 +293,7 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDim
     doubleTapGesture
   );
 
-// Animated styles - only for gesture-based zoom/pan
+  // Animated styles - only for gesture-based zoom/pan
   const animatedImageStyle = useAnimatedStyle(() => {
     return {
       transform: [
@@ -348,7 +356,10 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDim
               )}
 
               {isError && (
-                <View style={styles.errorContainer} accessible={true} accessibilityLabel="Failed to load image">
+                <View
+                  style={styles.errorContainer}
+                  accessible={true}
+                  accessibilityLabel="Failed to load image">
                   <Ionicons name="image-outline" size={64} color="rgba(255,255,255,0.5)" />
                 </View>
               )}
@@ -361,7 +372,9 @@ export function ImageViewer({ visible, imageUri, onClose, sourceLayout, imageDim
                   onLoad={(result) => {
                     // Get dimensions from onLoad event if not already provided
                     if (!imageDimensions && result.source.width && result.source.height) {
-                      setImageSize(calculateImageDimensions(result.source.width, result.source.height));
+                      setImageSize(
+                        calculateImageDimensions(result.source.width, result.source.height)
+                      );
                     }
                     setIsLoading(false);
                   }}

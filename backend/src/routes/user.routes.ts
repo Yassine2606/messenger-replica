@@ -9,12 +9,26 @@ const router = Router();
 router.get(
   '/search',
   authenticate,
-  validate([query('q').notEmpty().withMessage('Search query required')]),
+  validate([
+    query('q').notEmpty().withMessage('Search query required'),
+    query('limit').optional().isInt({ min: 1, max: 50 }),
+    query('before').optional().isInt(),
+    query('after').optional().isInt(),
+  ]),
   (req, res, next) => userController.searchUsers(req, res, next)
 );
 
 // Get all users
-router.get('/', authenticate, (req, res, next) => userController.getAllUsers(req, res, next));
+router.get(
+  '/',
+  authenticate,
+  validate([
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('before').optional().isInt(),
+    query('after').optional().isInt(),
+  ]),
+  (req, res, next) => userController.getAllUsers(req, res, next)
+);
 
 // Get user by ID
 router.get(

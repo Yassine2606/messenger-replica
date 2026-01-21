@@ -1,13 +1,21 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { conversationController } from '../controllers';
 import { authenticate, validate } from '../middleware';
-import { body } from 'express-validator';
+import { body, query } from 'express-validator';
 
 const router = Router();
 
 // Get all conversations for user
-router.get('/', authenticate, (req, res, next) =>
-  conversationController.getConversations(req, res, next)
+router.get(
+  '/',
+  authenticate,
+  validate([
+    query('limit').optional().isInt({ min: 1, max: 50 }),
+    query('before').optional().isString(),
+    query('after').optional().isString(),
+  ]),
+  (req: Request, res: Response, next: NextFunction) =>
+    conversationController.getConversations(req, res, next)
 );
 
 // Get single conversation

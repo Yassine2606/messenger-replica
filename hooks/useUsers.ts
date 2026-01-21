@@ -1,23 +1,21 @@
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
-import { User } from '@/models';
+import { User, PaginatedResponse, SearchUsersOptions, GetAllUsersOptions } from '@/models';
 import { userService } from '@/services';
-
-const USER_QUERY_KEYS = {
-  all: ['users'] as const,
-  search: (query: string) => [...USER_QUERY_KEYS.all, 'search', query] as const,
-  detail: (userId: number) => [...USER_QUERY_KEYS.all, userId] as const,
-  list: () => [...USER_QUERY_KEYS.all, 'list'] as const,
-};
+import { userQueryKeys } from '@/lib/query-keys';
 
 /**
  * Hook to search users by name or email with real-time results
  */
-export function useSearchUsers(query: string, enabled = true): UseQueryResult<User[], Error> {
+export function useSearchUsers(
+  query: string,
+  options: SearchUsersOptions = {},
+  enabled = true
+): UseQueryResult<PaginatedResponse<User>, Error> {
   return useQuery({
-    queryKey: USER_QUERY_KEYS.search(query),
+    queryKey: userQueryKeys.search(query, options),
     queryFn: async () => {
-      if (!query.trim()) return [];
-      return userService.searchUsers(query);
+      if (!query.trim()) return { data: [], pagination: { hasNext: false, hasPrevious: false } };
+      return userService.searchUsers(query, options);
     },
     enabled: enabled && !!query.trim(),
     staleTime: 2 * 60 * 1000, // 2 minutes
@@ -31,7 +29,7 @@ export function useSearchUsers(query: string, enabled = true): UseQueryResult<Us
  */
 export function useGetUser(userId: number | null, enabled = true): UseQueryResult<User, Error> {
   return useQuery({
-    queryKey: USER_QUERY_KEYS.detail(userId || 0),
+    queryKey: userQueryKeys.detail(userId || 0),
     queryFn: async () => {
       if (!userId) throw new Error('User ID is required');
       return userService.getUser(userId);
@@ -47,11 +45,14 @@ export function useGetUser(userId: number | null, enabled = true): UseQueryResul
 /**
  * Hook to get all users with real-time updates
  */
-export function useGetAllUsers(enabled = true): UseQueryResult<User[], Error> {
+export function useGetAllUsers(
+  options: GetAllUsersOptions = {},
+  enabled = true
+): UseQueryResult<PaginatedResponse<User>, Error> {
   return useQuery({
-    queryKey: USER_QUERY_KEYS.list(),
+    queryKey: userQueryKeys.list(options),
     queryFn: async () => {
-      return userService.getAllUsers();
+      return userService.getAllUsers(options);
     },
     enabled,
     staleTime: 10 * 60 * 1000, // 10 minutes

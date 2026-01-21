@@ -8,8 +8,8 @@ import { useUserStore } from '@/stores';
 export function useUserPresence(userId: number | undefined, fallbackLastSeen?: string) {
   // Use Zustand selector to get stable reference to presence data
   // If userId is not provided, return the fallback lastSeen
-  const lastSeen = useUserStore(
-    (state) => (userId ? state.userPresence.get(userId)?.lastSeen || fallbackLastSeen : fallbackLastSeen)
+  const lastSeen = useUserStore((state) =>
+    userId ? state.userPresence.get(userId)?.lastSeen || fallbackLastSeen : fallbackLastSeen
   );
 
   return lastSeen;

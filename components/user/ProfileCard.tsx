@@ -24,10 +24,15 @@ export function ProfileCard({ icon, label, value }: ProfileCardProps) {
         <Ionicons name={icon as any} size={20} color={colors.text.inverted} />
       </View>
       <View className="flex-1">
-        <Text style={{ color: colors.text.secondary }} className="text-xs font-medium uppercase tracking-wider">
+        <Text
+          style={{ color: colors.text.secondary }}
+          className="text-xs font-medium uppercase tracking-wider">
           {label}
         </Text>
-        <Text style={{ color: colors.text.primary }} className="mt-1 text-base font-semibold" numberOfLines={1}>
+        <Text
+          style={{ color: colors.text.primary }}
+          className="mt-1 text-base font-semibold"
+          numberOfLines={1}>
           {value || 'Not set'}
         </Text>
       </View>

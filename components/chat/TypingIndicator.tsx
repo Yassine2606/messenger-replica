@@ -1,10 +1,6 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { useTheme } from '@/contexts';
 
 interface TypingIndicatorProps {
@@ -74,13 +70,7 @@ export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
         <Text style={styles.label}>{userName || 'User'} is typing</Text>
         <View style={styles.dotsContainer}>
           {[0, 1, 2].map((i) => (
-            <View
-              key={i}
-              style={[
-                styles.dot,
-                { opacity: getDotOpacity(i) },
-              ]}
-            />
+            <View key={i} style={[styles.dot, { opacity: getDotOpacity(i) }]} />
           ))}
         </View>
       </View>

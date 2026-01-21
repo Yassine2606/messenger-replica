@@ -41,7 +41,10 @@ export function useAudioHandlers({
       if (uploadResult.success) {
         const audioUrl = uploadResult.file.url.startsWith('http')
           ? uploadResult.file.url
-          : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${uploadResult.file.url}`.replace('/api/uploads', '/uploads');
+          : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${uploadResult.file.url}`.replace(
+              '/api/uploads',
+              '/uploads'
+            );
 
         sendMutation.mutate({
           conversationId,
@@ -58,7 +61,14 @@ export function useAudioHandlers({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Alert.alert('Error', `Failed to send audio: ${errorMessage}`);
     }
-  }, [stopRecording, uploadAudioMutation, sendMutation, conversationId, replyToMessage?.id, onReplyCleared]);
+  }, [
+    stopRecording,
+    uploadAudioMutation,
+    sendMutation,
+    conversationId,
+    replyToMessage?.id,
+    onReplyCleared,
+  ]);
 
   const handleCancelRecording = useCallback(async () => {
     try {

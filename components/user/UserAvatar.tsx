@@ -43,7 +43,9 @@ export function UserAvatar({ avatarUrl, userName, size = 'md' }: UserAvatarProps
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-        <Text style={{ color: colors.text.inverted }} className={`font-semibold ${config.textSize}`}>
+        <Text
+          style={{ color: colors.text.inverted }}
+          className={`font-semibold ${config.textSize}`}>
           {userName.charAt(0).toUpperCase()}
         </Text>
       </View>

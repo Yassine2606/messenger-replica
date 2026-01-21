@@ -6,13 +6,13 @@ import { Message } from './message';
  */
 export interface Conversation {
   id: number;
-  participants?: Array<{
+  participants?: {
     id: number;
     name: string;
     avatarUrl?: string;
     status?: string;
     lastSeen?: string;
-  }>;
+  }[];
   lastMessage?: Partial<Message>;
   lastMessageAt?: string;
   unreadCount: number;

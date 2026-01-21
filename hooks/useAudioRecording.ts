@@ -10,7 +10,7 @@ export function useAudioRecording() {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  
+
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Create recorder using expo-audio hook

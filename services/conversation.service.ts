@@ -1,12 +1,28 @@
 import { apiClient } from './client';
-import { Conversation } from '@/models';
+import { Conversation, PaginatedResponse } from '@/models';
+
+export interface GetConversationsOptions {
+  limit?: number;
+  before?: string;
+  after?: string;
+}
 
 export class ConversationService {
   /**
-   * Get all conversations for current user
+   * Get all conversations for current user with pagination
    */
-  async getConversations(): Promise<Conversation[]> {
-    return apiClient.get<Conversation[]>('/conversations');
+  async getConversations(
+    options: GetConversationsOptions = {}
+  ): Promise<PaginatedResponse<Conversation>> {
+    const params = new URLSearchParams();
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.before) params.append('before', options.before);
+    if (options.after) params.append('after', options.after);
+
+    const queryString = params.toString();
+    const url = `/conversations${queryString ? `?${queryString}` : ''}`;
+
+    return apiClient.get<PaginatedResponse<Conversation>>(url);
   }
 
   /**

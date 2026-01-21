@@ -51,13 +51,12 @@ export function useUpdateProfile() {
 
       // Update cache with new data
       queryClient.setQueryData(PROFILE_QUERY_KEYS.current(), updatedUser);
-      
+
       // Invalidate to ensure freshness and refetch if needed
       queryClient.invalidateQueries({
         queryKey: PROFILE_QUERY_KEYS.all,
         refetchType: 'active',
       });
-      
     },
     onError: (error) => {
       console.error('useUpdateProfile: Error occurred:', error);

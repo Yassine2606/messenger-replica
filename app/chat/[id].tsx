@@ -1,19 +1,44 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, TextInput, ActivityIndicator, Text, FlatList, Alert, Platform } from 'react-native';
+import { View, TextInput, ActivityIndicator, Text, Alert, Platform, FlatList } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { useSharedValue, useAnimatedStyle, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedReaction,
+  runOnJS,
+} from 'react-native-reanimated';
+
 import * as Haptics from 'expo-haptics';
 import { ErrorBoundary, ErrorState, SocketConnectionStatus } from '@/components/common';
-import { ChatHeader, ChatInputFooter, MessageBubble, ScrollToBottom, MessageStatus, TypingIndicator, TimeSeparator, MessageContextMenuModal } from '@/components/chat';
+import {
+  ChatHeader,
+  ChatInputFooter,
+  MessageBubble,
+  ScrollToBottom,
+  MessageStatus,
+  TypingIndicator,
+  TimeSeparator,
+  MessageContextMenuModal,
+} from '@/components/chat';
 import { ImageViewer, AudioRecordingControls, VoiceMessagePlayer } from '@/components/media';
-import { useInfiniteMessages, useProfile, useGetConversation, useDeleteMessage, useAudioHandlers, useImageHandlers, useTypingIndicator, useAudioRecording, useSendMessage } from '@/hooks';
+import {
+  useInfiniteMessages,
+  useProfile,
+  useGetConversation,
+  useDeleteMessage,
+  useAudioHandlers,
+  useImageHandlers,
+  useTypingIndicator,
+  useAudioRecording,
+  useSendMessage,
+  useMarkMessagesAsRead,
+} from '@/hooks';
 import { useMessageStore, useUserStore } from '@/stores';
 import { useTheme } from '@/contexts';
 import { socketClient } from '@/lib/socket';
 import { SPACING } from '@/lib';
-import { Message, MessageType } from '@/models';
+import { Message, MessageType, PaginatedResponse } from '@/models';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ChatScreen() {
@@ -27,14 +52,17 @@ export default function ChatScreen() {
   const deleteMessageMutation = useDeleteMessage(conversationId);
   const { data: user } = useProfile();
 
-  const handleMessageContextMenu = useCallback((message: Message) => {
-    const isOwnMessage = message.senderId === user?.id;
-    
-    if (isOwnMessage) {
-      // Own message - show delete modal
-      setActiveContextMessage(message);
-    }
-  }, [user?.id]);
+  const handleMessageContextMenu = useCallback(
+    (message: Message) => {
+      const isOwnMessage = message.senderId === user?.id;
+
+      if (isOwnMessage) {
+        // Own message - show delete modal
+        setActiveContextMessage(message);
+      }
+    },
+    [user?.id]
+  );
 
   const closeContextMenu = useCallback(() => {
     setActiveContextMessage(null);
@@ -62,20 +90,25 @@ export default function ChatScreen() {
 
   // ============== Data ==============
   const { data: conversation } = useGetConversation(conversationId);
+  const infiniteMessagesResult = useInfiniteMessages(conversationId, !!conversationId);
   const {
     data,
     isLoading: messagesLoading,
     error: messagesError,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteMessages(conversationId, !!conversationId);
-  
+    fetchPreviousPage,
+    hasPreviousPage,
+    isFetchingPreviousPage,
+  } = infiniteMessagesResult;
+
   const messages = useMemo(() => {
     if (!data?.pages) return [];
-    return data.pages.flatMap((page: Message[]) => page);
+    // Pages array structure with newest-first DESC order from backend:
+    // - Each page: messages in DESC order (newest first)
+    // - Pages array: [page0(newest msgs), page1(older msgs), ...]
+    // Flatten to get all messages, maintaining DESC order (newest first)
+    return data.pages.flatMap((page: PaginatedResponse<Message>) => page.data);
   }, [data]);
-  
+
   // ============== Socket/Room ==============
   useEffect(() => {
     socketClient.joinConversation(conversationId);
@@ -84,32 +117,31 @@ export default function ChatScreen() {
     };
   }, [conversationId]);
 
+  // ============== Mark Messages as Read ==============
+  useMarkMessagesAsRead(conversationId, messages, user?.id);
+
   // ============== Input State ==============
-  const [messageText, setMessageText] = useState('');
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUri, setImageViewerUri] = useState('');
-  const [imageViewerDimensions, setImageViewerDimensions] = useState<{ width: number; height: number } | undefined>();
-  const [imageSourceLayout, setImageSourceLayout] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | undefined>();
+  const [imageViewerDimensions, setImageViewerDimensions] = useState<
+    { width: number; height: number } | undefined
+  >();
+  const [imageSourceLayout, setImageSourceLayout] = useState<
+    | {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }
+    | undefined
+  >();
 
   const { isUserTyping } = useUserStore();
   const otherParticipant = conversation?.participants?.find((p) => p.id !== user?.id);
 
   // ============== Typing Indicator Hook ==============
-  const { handleTextChange: handleTypingIndicator } = useTypingIndicator({ conversationId });
   const sendMutation = useSendMessage(conversationId);
-
-  const handleMessageTextChange = useCallback((text: string) => {
-    // Prevent changes while sending
-    if (sendMutation.isPending) return;
-    setMessageText(text);
-    handleTypingIndicator(text);
-  }, [handleTypingIndicator, sendMutation.isPending]);
 
   // ============== Image Handlers Hook ==============
   const { handlePickImage, handleTakePhoto } = useImageHandlers({
@@ -137,32 +169,34 @@ export default function ChatScreen() {
 
   // ============== Send Message Hook ==============
 
-  const handleSend = useCallback(() => {
-    const trimmedText = messageText.trim();
+  const handleSend = useCallback((text: string) => {
+    const trimmedText = text.trim();
     if (!trimmedText) return;
 
     // Send message immediately without clearing state first
-    sendMutation.mutate({
-      conversationId,
-      type: MessageType.TEXT,
-      content: trimmedText,
-      replyToId: replyToMessage?.id,
-    }, {
-      onSuccess: () => {
-        // Clear state AFTER successful send (optimistic update already in place)
-        setMessageText('');
-        setReplyToMessage(null);
-        // Scroll to bottom after message sent
-        setTimeout(() => {
-          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-        }, 100);
+    sendMutation.mutate(
+      {
+        conversationId,
+        type: MessageType.TEXT,
+        content: trimmedText,
+        replyToId: replyToMessage?.id,
       },
-      onError: (error) => {
-        console.error('Failed to send message:', error);
-        // Text stays for retry
-      },
-    });
-  }, [messageText, replyToMessage, sendMutation]);
+      {
+        onSuccess: () => {
+          // Clear state AFTER successful send (optimistic update already in place)
+          setReplyToMessage(null);
+          // Scroll to bottom after message sent
+          setTimeout(() => {
+            flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          }, 50);
+        },
+        onError: (error) => {
+          console.error('Failed to send message:', error);
+          // Text stays for retry
+        },
+      }
+    );
+  }, [replyToMessage, sendMutation]);
 
   const handleReply = useCallback((message: Message) => {
     setReplyToMessage(message);
@@ -179,40 +213,62 @@ export default function ChatScreen() {
     setReplyToMessage(null);
   }, []);
 
-  const handleImagePress = useCallback((imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => {
-    const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3000';
-    setImageViewerUri(`${API_BASE_URL}${imageUri}`);
-    setImageSourceLayout(layout);
-    // Pass the rendered image dimensions (120x200 from MessageBubble) to skip Image.getSize() call
-    setImageViewerDimensions({ width: 120, height: 200 });
-    setImageViewerVisible(true);
-  }, []);
+  const handleImagePress = useCallback(
+    (imageUri: string, layout?: { x: number; y: number; width: number; height: number }) => {
+      const API_BASE_URL =
+        process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3000';
+      setImageViewerUri(`${API_BASE_URL}${imageUri}`);
+      setImageSourceLayout(layout);
+      // Pass the rendered image dimensions (120x200 from MessageBubble) to skip Image.getSize() call
+      setImageViewerDimensions({ width: 120, height: 200 });
+      setImageViewerVisible(true);
+    },
+    []
+  );
 
   // ============== Optimistic Messages ==============
   const { optimisticMessages } = useMessageStore();
   const conversationOptimisticMessages = useMemo(
-    () => Array.from(optimisticMessages.values()).filter((msg) => msg.conversationId === conversationId),
+    () =>
+      Array.from(optimisticMessages.values()).filter(
+        (msg) => msg.conversationId === conversationId
+      ),
     [optimisticMessages, conversationId]
   );
 
   // ============== Combined Messages ==============
   const combinedMessages = useMemo(() => {
+    // Combine cache messages (in DESC order from backend) and optimistic messages
     const combined = [...(messages || []), ...conversationOptimisticMessages];
-    // Sort by createdAt timestamp (newest first for FlatList inverted)
-    return combined.sort((a, b) => {
+    
+    // Deduplicate by ID (in case message appears in both cache and store)
+    const seen = new Set<number>();
+    const deduped = combined.filter((msg) => {
+      if (seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+    
+    // Sort by createdAt timestamp DESC (newest first)
+    // This ensures optimistic messages (newest) stay on top
+    return deduped.sort((a, b) => {
       const timeA = new Date(a.createdAt).getTime();
       const timeB = new Date(b.createdAt).getTime();
-      return timeB - timeA; // Reversed: newest first
+      return timeB - timeA; // Descending: newest first
     });
   }, [messages, conversationOptimisticMessages]);
 
-  const handleScrollToReply = useCallback(async (message: Message) => {
-    if (!message.replyTo || !message.replyTo.id) return;
-    const index = combinedMessages.findIndex(msg => msg.id === message.replyTo!.id);
-    if (index !== -1) {
-      flatListRef.current?.scrollToIndex({ index, animated: true });
-    }
-  }, [combinedMessages]);
+  const handleScrollToReply = useCallback(
+    async (message: Message) => {
+      if (!message.replyTo || !message.replyTo.id) return;
+      const index = combinedMessages.findIndex((msg) => msg.id === message.replyTo!.id);
+      if (index !== -1) {
+        // FlashList uses scrollToIndex API
+        flatListRef.current?.scrollToIndex({ index, animated: false });
+      }
+    },
+    [combinedMessages]
+  );
 
   // ============== Shared Animated Values ==============
   const sharedRowTranslateX = useSharedValue(0);
@@ -221,15 +277,18 @@ export default function ChatScreen() {
   // ============== Refs ==============
   const flatListRef = useRef<FlatList<Message>>(null);
   const messageAreaRef = useRef<View>(null);
-  
+
   // ============== Show scroll button when not at top (inverted) ==============
   const shouldShowButton = useSharedValue(0);
   const [buttonVisible, setButtonVisible] = useState(false);
-  const isTypingIndicatorVisible = otherParticipant?.id ? isUserTyping(otherParticipant.id) : false;
-  
-  useAnimatedReaction(() => shouldShowButton.value, (value) => {
-    runOnJS(setButtonVisible)(value > 0.5 && !isTypingIndicatorVisible);
-  });
+  const isTypingIndicatorVisible = otherParticipant?.id ? isUserTyping(conversationId, otherParticipant.id) : false;
+
+  useAnimatedReaction(
+    () => shouldShowButton.value,
+    (value) => {
+      runOnJS(setButtonVisible)(value > 0.5 && !isTypingIndicatorVisible);
+    }
+  );
 
   // Hide button immediately when typing indicator appears
   useEffect(() => {
@@ -237,7 +296,7 @@ export default function ChatScreen() {
       setButtonVisible(false);
     }
   }, [isTypingIndicatorVisible]);
-  
+
   const showScrollButtonStyle = useAnimatedStyle(() => ({
     pointerEvents: shouldShowButton.value > 0.5 ? 'auto' : 'none',
   }));
@@ -248,93 +307,120 @@ export default function ChatScreen() {
   }, []);
 
   // ============== Scroll Handler ==============
-  const handleScroll = useCallback((e: any) => {
-    const contentOffsetY = e.nativeEvent.contentOffset.y;
-    // With inverted list, check if we're at the top (near newest messages)
-    const isNearTop = contentOffsetY <= 1000;
-    shouldShowButton.value = isNearTop ? 0 : 1;
-  }, [shouldShowButton]);
-  const renderItem = useCallback(({ item, index }: { item: Message; index: number }) => {
-    const isOwn = item.senderId === user?.id;
-    // Check if this is the last own message (most recent own message - first in inverted list)
-    const isLastOwnMessage = isOwn && !combinedMessages.slice(0, index).some(msg => msg.senderId === user?.id);
-    
-    // Safe array bounds checking
-    const previousMessage = index + 1 < combinedMessages.length ? combinedMessages[index + 1] : undefined;
-    const nextMessage = index > 0 ? combinedMessages[index - 1] : undefined;
+  const handleScroll = useCallback(
+    (e: any) => {
+      const contentOffsetY = e.nativeEvent.contentOffset.y;
+      // With inverted list, check if we're at the bottom (near newest messages)
+      const isAtBottom = contentOffsetY <= 100;
+      shouldShowButton.value = isAtBottom ? 0 : 1;
+    },
+    [shouldShowButton]
+  );
+  const renderItem = useCallback(
+    ({ item, index }: { item: Message; index: number }) => {
+      const isOwn = item.senderId === user?.id;
+      // Check if this is the last own message (most recent own message)
+      // With inverted list: check if no newer own message exists before this one
+      const isLastOwnMessage =
+        isOwn && !combinedMessages.slice(0, index).some((msg) => msg.senderId === user?.id);
 
-    // Check if we need to show time separator (day boundary)
-    // Only show separator if the previous message is from a different day
-    const showTimeSeparator = (() => {
-      if (!previousMessage) return true; // Always show for first message
-      
-      const currentDate = new Date(item.createdAt);
-      const previousDate = new Date(previousMessage.createdAt);
-      
-      // Compare dates (ignoring time)
-      return currentDate.toDateString() !== previousDate.toDateString();
-    })();
+      // Safe array bounds checking
+      const previousMessage =
+        index + 1 < combinedMessages.length ? combinedMessages[index + 1] : undefined;
+      const nextMessage = index > 0 ? combinedMessages[index - 1] : undefined;
 
-    return (
-      <ErrorBoundary componentName="MessageBubble">
-        <View>
-          {showTimeSeparator && <TimeSeparator date={item.createdAt} />}
-          <MessageBubble
-            message={item}
-            previousMessage={previousMessage}
-            nextMessage={nextMessage}
-            showTimeSeparator={showTimeSeparator}
-            isOwn={isOwn}
-            onReply={handleReply}
-            onShowMenu={() => {}}
-            onContextMenu={handleMessageContextMenu}
-            onImagePress={item.type === MessageType.IMAGE ? handleImagePress : undefined}
-            onScrollToReply={handleScrollToReply}
-            sharedRowTranslateX={sharedRowTranslateX}
-            sharedTimestampOpacity={sharedTimestampOpacity}
-          />
-          {/* Audio player - rendered separately with width constraint */}
-          {item.type === MessageType.AUDIO && item.mediaUrl && (
-            <View className={`mt-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
-              <VoiceMessagePlayer
-                audioUrl={item.mediaUrl.startsWith('http') ? item.mediaUrl : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${item.mediaUrl}`.replace('/api/uploads', '/uploads')}
-                waveform={item.waveform || []}
-                duration={item.mediaDuration || 0}
-                isOwn={isOwn}
-                message={item}
-                previousMessage={previousMessage}
-                nextMessage={nextMessage}
-                onContextMenu={handleMessageContextMenu}
-              />
-            </View>
-          )}
-          {isLastOwnMessage && (
-            <View className="mt-1 flex-row items-center justify-end gap-1 pr-1">
-              <MessageStatus reads={item.reads} currentUserId={user?.id} />
-            </View>
-          )}
-        </View>
-      </ErrorBoundary>
-    );
-  }, [combinedMessages, user?.id, handleReply, handleMessageContextMenu, handleImagePress, sharedRowTranslateX, sharedTimestampOpacity]);
+      // Check if we need to show time separator (day boundary)
+      // Only show separator if the previous message is from a different day
+      const showTimeSeparator = (() => {
+        if (!previousMessage) return true; // Always show for first message
+
+        const currentDate = new Date(item.createdAt);
+        const previousDate = new Date(previousMessage.createdAt);
+
+        // Compare dates (ignoring time)
+        return currentDate.toDateString() !== previousDate.toDateString();
+      })();
+
+      return (
+        <ErrorBoundary componentName="MessageBubble">
+          <View>
+            {showTimeSeparator && <TimeSeparator date={item.createdAt} />}
+            <MessageBubble
+              message={item}
+              previousMessage={previousMessage}
+              nextMessage={nextMessage}
+              showTimeSeparator={showTimeSeparator}
+              isOwn={isOwn}
+              onReply={handleReply}
+              onShowMenu={() => {}}
+              onContextMenu={handleMessageContextMenu}
+              onImagePress={item.type === MessageType.IMAGE ? handleImagePress : undefined}
+              onScrollToReply={handleScrollToReply}
+              sharedRowTranslateX={sharedRowTranslateX}
+              sharedTimestampOpacity={sharedTimestampOpacity}
+            />
+            {/* Audio player - rendered separately with width constraint */}
+            {item.type === MessageType.AUDIO && item.mediaUrl && (
+              <View className={`mt-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                <VoiceMessagePlayer
+                  audioUrl={
+                    item.mediaUrl.startsWith('http')
+                      ? item.mediaUrl
+                      : `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}${item.mediaUrl}`.replace(
+                          '/api/uploads',
+                          '/uploads'
+                        )
+                  }
+                  waveform={item.waveform || []}
+                  duration={item.mediaDuration || 0}
+                  isOwn={isOwn}
+                  message={item}
+                  previousMessage={previousMessage}
+                  nextMessage={nextMessage}
+                  onContextMenu={handleMessageContextMenu}
+                />
+              </View>
+            )}
+            {isLastOwnMessage && (
+              <View className="mt-1 flex-row items-center justify-end gap-1 pr-1">
+                <MessageStatus reads={item.reads} currentUserId={user?.id} />
+              </View>
+            )}
+          </View>
+        </ErrorBoundary>
+      );
+    },
+    [
+      combinedMessages,
+      user?.id,
+      handleReply,
+      handleMessageContextMenu,
+      handleImagePress,
+      sharedRowTranslateX,
+      sharedTimestampOpacity,
+    ]
+  );
 
   // ============== Loading State ==============
   if (messagesLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <ChatHeader
+          title={`${otherParticipant?.name || 'Chat'}`}
+          userId={otherParticipant?.id}
+          lastSeen={otherParticipant?.lastSeen}
+          userName={otherParticipant?.name}
+          userAvatarUrl={otherParticipant?.avatarUrl}
+        />
         <SocketConnectionStatus />
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
         <ChatInputFooter
-          messageText={messageText}
-          onChangeText={handleMessageTextChange}
           onSend={handleSend}
-          replyToMessage={replyToMessage}
+          replyTo={replyToMessage}
           onCancelReply={cancelReply}
           sendingMessage={sendMutation.isPending}
-          inputRef={inputRef}
           onPickImage={handlePickImage}
           onTakePhoto={handleTakePhoto}
           onPickAudio={handleStartRecording}
@@ -347,7 +433,13 @@ export default function ChatScreen() {
   if (messagesError && !messages.length) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <ChatHeader
+          title={`${otherParticipant?.name || 'Chat'}`}
+          userId={otherParticipant?.id}
+          lastSeen={otherParticipant?.lastSeen}
+          userName={otherParticipant?.name}
+          userAvatarUrl={otherParticipant?.avatarUrl}
+        />
         <SocketConnectionStatus />
         <View className="flex-1 items-center justify-center">
           <ErrorState
@@ -359,13 +451,10 @@ export default function ChatScreen() {
           />
         </View>
         <ChatInputFooter
-          messageText={messageText}
-          onChangeText={handleMessageTextChange}
           onSend={handleSend}
-          replyToMessage={replyToMessage}
+          replyTo={replyToMessage}
           onCancelReply={cancelReply}
           sendingMessage={sendMutation.isPending}
-          inputRef={inputRef}
           onPickImage={handlePickImage}
           onTakePhoto={handleTakePhoto}
           onPickAudio={handleStartRecording}
@@ -376,11 +465,25 @@ export default function ChatScreen() {
 
   // ============== Render ==============
   return (
-    <KeyboardAvoidingView behavior={ Platform.OS === 'ios' ? 'padding' : 'height' } style={{ flex: 1 }}>
-      <View className="flex-1 bg-white">
-        <ImageViewer visible={imageViewerVisible} imageUri={imageViewerUri} onClose={() => setImageViewerVisible(false)} sourceLayout={imageSourceLayout} imageDimensions={imageViewerDimensions} />
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={{ flex: 1, backgroundColor: colors.bg.primary }}>
+      <View style={{ flex: 1 }}>
+        <ImageViewer
+          visible={imageViewerVisible}
+          imageUri={imageViewerUri}
+          onClose={() => setImageViewerVisible(false)}
+          sourceLayout={imageSourceLayout}
+          imageDimensions={imageViewerDimensions}
+        />
 
-        <ChatHeader title={`${otherParticipant?.name || 'Chat'}`} userId={otherParticipant?.id} lastSeen={otherParticipant?.lastSeen} userName={otherParticipant?.name} userAvatarUrl={otherParticipant?.avatarUrl} />
+        <ChatHeader
+          title={`${otherParticipant?.name || 'Chat'}`}
+          userId={otherParticipant?.id}
+          lastSeen={otherParticipant?.lastSeen}
+          userName={otherParticipant?.name}
+          userAvatarUrl={otherParticipant?.avatarUrl}
+        />
         <SocketConnectionStatus />
 
         <View style={{ flex: 1, position: 'relative', backgroundColor: colors.bg.primary }}>
@@ -389,22 +492,28 @@ export default function ChatScreen() {
               ref={flatListRef}
               data={combinedMessages}
               keyExtractor={keyExtractor}
+              extraData={combinedMessages}
               inverted
+              removeClippedSubviews={true}
+              initialNumToRender={12}
+              windowSize={5}
               onScroll={handleScroll}
               scrollEventThrottle={16}
-              keyboardShouldPersistTaps="never"
-              maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 10 }}
+              maintainVisibleContentPosition={{
+                minIndexForVisible: 0,
+                autoscrollToTopThreshold: 10,
+              }}
               onEndReached={() => {
-                if (hasNextPage && !isFetchingNextPage) {
-                  fetchNextPage();
+                if (hasPreviousPage && !isFetchingPreviousPage) {
+                  fetchPreviousPage();
                 }
               }}
               onEndReachedThreshold={0.5}
               scrollIndicatorInsets={{ right: 1 }}
               ListFooterComponent={
                 <>
-                  {isFetchingNextPage && (
-                    <View className="py-4 items-center">
+                  {isFetchingPreviousPage && (
+                    <View className="items-center py-4">
                       <ActivityIndicator size="small" color={colors.primary} />
                     </View>
                   )}
@@ -413,7 +522,7 @@ export default function ChatScreen() {
                       <ErrorState
                         error={messagesError as Error}
                         onRetry={() => {
-                          fetchNextPage();
+                          fetchPreviousPage();
                         }}
                         compact
                         message="Failed to load more messages"
@@ -423,10 +532,17 @@ export default function ChatScreen() {
                 </>
               }
               renderItem={renderItem}
-              contentContainerStyle={{ paddingHorizontal: SPACING.MESSAGE_HORIZONTAL, paddingVertical: SPACING.MESSAGE_VERTICAL }}
+              contentContainerStyle={{
+                paddingHorizontal: SPACING.MESSAGE_HORIZONTAL,
+                paddingVertical: SPACING.MESSAGE_VERTICAL,
+              }}
               ListEmptyComponent={
                 <View className="flex-1 items-center justify-center py-20">
-                  <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.text.tertiary} />
+                  <Ionicons
+                    name="chatbubble-ellipses-outline"
+                    size={48}
+                    color={colors.text.tertiary}
+                  />
                   <Text style={{ color: colors.text.secondary }} className="text-base">
                     No messages yet
                   </Text>
@@ -455,13 +571,16 @@ export default function ChatScreen() {
               showScrollButtonStyle,
             ]}
             pointerEvents="box-none">
-            <ScrollToBottom visible={buttonVisible && !isTypingIndicatorVisible} onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false })} />
+            <ScrollToBottom
+              visible={buttonVisible && !isTypingIndicatorVisible}
+              onPress={() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false })}
+            />
           </Animated.View>
         </View>
 
         {/* Typing Indicator - Only takes space when visible */}
         <TypingIndicator
-          visible={otherParticipant?.id ? isUserTyping(otherParticipant.id) : false}
+          visible={otherParticipant?.id ? isUserTyping(conversationId, otherParticipant.id) : false}
           userName={otherParticipant?.name}
         />
 
@@ -476,20 +595,15 @@ export default function ChatScreen() {
           />
         ) : (
           <ChatInputFooter
-            messageText={messageText}
-            onChangeText={handleMessageTextChange}
             onSend={handleSend}
-            replyToMessage={replyToMessage}
+            replyTo={replyToMessage}
             onCancelReply={cancelReply}
             sendingMessage={sendMutation.isPending}
-            inputRef={inputRef}
             onPickImage={openImagePicker}
             onTakePhoto={handleTakePhoto}
             onPickAudio={handleStartRecording}
           />
         )}
-
-
       </View>
     </KeyboardAvoidingView>
   );

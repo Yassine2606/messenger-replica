@@ -1,134 +1,126 @@
 import { create } from 'zustand';
-import { Message, ReadStatus } from '@/models';
+import { Message, MessageType, ReadStatus } from '@/models';
 
-interface MessageQueueItem {
-  tempId: string;
-  message: Message;
-  conversationId: number;
-}
-
+/**
+ * Zustand Store: OPTIMISTIC UI STATE ONLY
+ * 
+ * According to Socket.io + React Query blueprint:
+ * - Stores temporary/optimistic message IDs while sending
+ * - Tracks which messages are "in-flight" for loading spinners
+ * - Removed as soon as server confirms via Socket event
+ * 
+ * ❌ NOT stored here:
+ * - Actual messages (React Query infinite scroll cache)
+ * - Message read status (React Query cache)
+ * - Conversations (React Query cache)
+ * 
+ * ✅ Stored here:
+ * - Optimistic messages being sent (before server confirmation)
+ * - Temporary client-side IDs for UI feedback
+ * - Message sending status (sending/sent/failed)
+ */
 interface MessageStoreState {
-  optimisticMessages: Map<string, Message>; // tempId -> Message
-  queue: MessageQueueItem[];
-  nextOptimisticId: number; // Counter for unique negative IDs
+  // Map of tempId -> optimistic Message with status updates
+  optimisticMessages: Map<string, Message>;
+  nextOptimisticId: number;
 
   // Actions
-  addOptimisticMessage: (tempId: string, message: Message, conversationId: number) => void;
+  addOptimisticMessage: (tempId: string, message: Message) => Message;
+  updateMessageStatus: (tempId: string, status: 'sending' | 'sent' | 'failed', serverId?: number) => void;
   removeOptimisticMessage: (tempId: string) => void;
-  confirmOptimisticMessage: (tempId: string, actualMessage: Message) => void;
-  failOptimisticMessage: (tempId: string) => void;
-  markAsDelivered: (messageId: number) => void;
-  markAsRead: (messageId: number) => void;
   getOptimisticMessage: (tempId: string) => Message | undefined;
-  hasOptimisticMessage: (tempId: string) => boolean;
-  clearByConversation: (conversationId: number) => void;
+  clearAll: () => void;
 }
 
 export const useMessageStore = create<MessageStoreState>((set, get) => ({
   optimisticMessages: new Map(),
-  queue: [],
   nextOptimisticId: -1,
 
-  addOptimisticMessage: (tempId, message, conversationId) => {
+  /**
+   * Add an optimistic message with 'sending' status
+   * Returns the message with assigned negative ID
+   */
+  addOptimisticMessage: (tempId, message) => {
+    let addedMessage: Message;
     set((state) => {
       const newMap = new Map(state.optimisticMessages);
-      const uniqueId = state.nextOptimisticId; // Use counter for unique IDs
-      // Attach tempId to message for identification
-      const messageWithTempId = { ...message, id: uniqueId, tempId } as any;
-      newMap.set(tempId, messageWithTempId);
+      const uniqueId = state.nextOptimisticId;
+      addedMessage = {
+        ...message,
+        id: uniqueId,
+        reads: [
+          {
+            id: uniqueId,
+            messageId: uniqueId,
+            userId: message.senderId,
+            status: ReadStatus.SENT, // Optimistic messages start as 'sending'
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+      newMap.set(tempId, addedMessage);
       return {
         optimisticMessages: newMap,
-        queue: [...state.queue, { tempId, message: messageWithTempId, conversationId }],
-        nextOptimisticId: uniqueId - 1, // Decrement for next optimistic message
+        nextOptimisticId: uniqueId - 1,
       };
     });
+    return addedMessage!;
   },
 
-  removeOptimisticMessage: (tempId) => {
-    set((state) => {
-      const newMap = new Map(state.optimisticMessages);
-      newMap.delete(tempId);
-      return {
-        optimisticMessages: newMap,
-        queue: state.queue.filter((item) => item.tempId !== tempId),
-      };
-    });
-  },
-
-  confirmOptimisticMessage: (tempId, actualMessage) => {
-    set((state) => {
-      const newMap = new Map(state.optimisticMessages);
-      newMap.delete(tempId);
-      return {
-        optimisticMessages: newMap,
-        queue: state.queue.filter((item) => item.tempId !== tempId),
-      };
-    });
-  },
-
-  failOptimisticMessage: (tempId) => {
+  /**
+   * Update message status (sending -> sent -> failed)
+   * Optionally replace temporary ID with server ID
+   */
+  updateMessageStatus: (tempId, status, serverId) => {
     set((state) => {
       const newMap = new Map(state.optimisticMessages);
       const msg = newMap.get(tempId);
       if (msg) {
-        newMap.set(tempId, { ...msg });
+        const statusMap = {
+          sending: ReadStatus.SENT,
+          sent: ReadStatus.DELIVERED,
+          failed: ReadStatus.SENT, // Keep as sent but marked failed
+        };
+        const updatedMsg = {
+          ...msg,
+          ...(serverId && { id: serverId }),
+          reads: msg.reads?.map((r) => ({
+            ...r,
+            status: statusMap[status],
+          })) || [],
+        };
+        newMap.set(tempId, updatedMsg);
       }
       return { optimisticMessages: newMap };
     });
   },
 
-  markAsDelivered: (messageId) => {
+  /**
+   * Remove optimistic message (replaced by server message)
+   */
+  removeOptimisticMessage: (tempId) => {
     set((state) => {
       const newMap = new Map(state.optimisticMessages);
-      newMap.forEach((msg, key) => {
-        if (msg.id === messageId) {
-          // Update reads array
-          const updatedMsg = {
-            ...msg,
-            reads: msg.reads?.map((r) => (r.status === ReadStatus.SENT ? { ...r, status: ReadStatus.DELIVERED } : r)) || [],
-          };
-          newMap.set(key, updatedMsg);
-        }
-      });
+      newMap.delete(tempId);
       return { optimisticMessages: newMap };
     });
   },
 
-  markAsRead: (messageId) => {
-    set((state) => {
-      const newMap = new Map(state.optimisticMessages);
-      newMap.forEach((msg, key) => {
-        if (msg.id === messageId) {
-          const updatedMsg = {
-            ...msg,
-            reads: msg.reads?.map((r) => (r.status !== ReadStatus.READ ? { ...r, status: ReadStatus.READ } : r)) || [],
-          };
-          newMap.set(key, updatedMsg);
-        }
-      });
-      return { optimisticMessages: newMap };
-    });
-  },
-
+  /**
+   * Get optimistic message by tempId
+   */
   getOptimisticMessage: (tempId) => {
     return get().optimisticMessages.get(tempId);
   },
 
-  hasOptimisticMessage: (tempId) => {
-    return get().optimisticMessages.has(tempId);
-  },
-
-  clearByConversation: (conversationId) => {
-    set((state) => {
-      const itemsToKeep = state.queue.filter((item) => item.conversationId !== conversationId);
-      const newMap = new Map<string, Message>();
-      itemsToKeep.forEach((item) => {
-        newMap.set(item.tempId, item.message);
-      });
-      return {
-        optimisticMessages: newMap,
-        queue: itemsToKeep,
-      };
+  /**
+   * Clear all optimistic messages
+   */
+  clearAll: () => {
+    set({
+      optimisticMessages: new Map(),
+      nextOptimisticId: -1,
     });
   },
 }));

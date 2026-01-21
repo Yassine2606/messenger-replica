@@ -1,21 +1,19 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { TouchableOpacity, Text, View, TextInput, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts';
 import type { Message } from '@/models';
 
 interface ChatInputFooterProps {
-  messageText: string;
-  onChangeText: (text: string) => void;
-  onSend: () => void;
-  replyToMessage: Message | null;
-  onCancelReply: () => void;
-  sendingMessage: boolean;
-  inputRef: React.RefObject<TextInput | null>;
-  onPickImage: () => void;
-  onTakePhoto: () => void;
-  onPickAudio: () => void;
+  onSend: (text: string) => void;
+  placeholder?: string;
+  replyTo?: Message | null;
+  onCancelReply?: () => void;
+  sendingMessage?: boolean;
+  onPickImage?: () => void;
+  onTakePhoto?: () => void;
+  onPickAudio?: () => void;
 }
 
 /**
@@ -31,23 +29,53 @@ interface ChatInputFooterProps {
  * - Chevron icon when composer is expanded
  */
 export function ChatInputFooter({
-  messageText,
-  onChangeText,
   onSend,
-  replyToMessage,
+  placeholder = 'Aa',
+  replyTo,
   onCancelReply,
-  sendingMessage,
-  inputRef,
+  sendingMessage = false,
   onPickImage,
   onTakePhoto,
   onPickAudio,
 }: ChatInputFooterProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
-  const hasText = messageText.trim().length > 0;
-  const canSend = hasText && !sendingMessage;
-  const showExpandedUI = hasText && isComposerExpanded;
+  const [text, setText] = useState('');
+  const [isFocused, setIsFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const composerWidthAnim = useRef(new Animated.Value(0)).current;
+
+  const isComposerExpanded = isFocused || text.length > 0;
+
+  React.useEffect(() => {
+    Animated.timing(composerWidthAnim, {
+      toValue: isComposerExpanded ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [isComposerExpanded, composerWidthAnim]);
+
+  const handleSend = () => {
+    const trimmedText = text.trim();
+    if (trimmedText) {
+      // Send the message
+      onSend(trimmedText);
+      // Clear input immediately for better UX
+      setText('');
+      // Optionally blur to collapse composer
+      setIsFocused(false);
+    }
+  };
+
+  const handleCollapseComposer = () => {
+    setText('');
+    setIsFocused(false);
+  };
+
+  const composerWidth = composerWidthAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['50%', '100%'],
+  });
 
   return (
     <View
@@ -57,177 +85,124 @@ export function ChatInputFooter({
         paddingBottom: insets.bottom,
         paddingTop: 8,
       }}
-      className="border-t">
-      {/* Reply indicator */}
-      {replyToMessage && (
+      className="border-t px-4 py-1">
+      {/* Reply context */}
+      {replyTo && (
         <View
           style={{
             backgroundColor: `${colors.primary}15`,
             borderLeftColor: colors.primary,
           }}
-          className="mx-3 mb-2 flex-row items-center rounded-xl px-3 py-2 border-l-4">
+          className="mb-2 flex-row items-center rounded-lg border-l-4 bg-gray-100 px-3 py-2">
           <View className="flex-1">
-            <Text style={{ color: colors.primary }} className="text-xs font-semibold">
-              Replying to {replyToMessage.sender?.name || 'User'}
+            <Text style={{ color: colors.primary }} className="text-xs">
+              Replying to {replyTo.sender?.name || 'User'}
             </Text>
-            <View className="mt-1 flex-row items-center">
-              {replyToMessage.type === 'image' ? (
-                <>
-                  <Ionicons name="image" size={16} color={colors.text.secondary} />
-                  <Text style={{ color: colors.text.primary }} className="ml-1 text-sm">
-                    Photo
-                  </Text>
-                </>
-              ) : replyToMessage.type === 'audio' ? (
-                <>
-                  <Ionicons name="mic" size={16} color={colors.text.secondary} />
-                  <Text style={{ color: colors.text.primary }} className="ml-1 text-sm">
-                    Audio
-                  </Text>
-                </>
-              ) : (
-                <Text style={{ color: colors.text.primary }} className="text-sm" numberOfLines={1}>
-                  {replyToMessage.content || 'Message'}
-                </Text>
-              )}
-            </View>
+            <Text style={{ color: colors.text.primary }} className="text-sm" numberOfLines={1}>
+              {replyTo.content || replyTo.type || 'Message'}
+            </Text>
           </View>
-          <Pressable
-            onPress={onCancelReply}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel reply">
-            <Ionicons name="close" size={20} color={colors.primary} />
-          </Pressable>
+          <TouchableOpacity onPress={onCancelReply} className="ml-2" activeOpacity={0.7} hitSlop={8}>
+            <Ionicons name="close" size={16} color={colors.primary} />
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Input controls */}
-      <View className="flex-row items-center px-3 gap-2">
-        {/* Camera button or Collapse chevron */}
-        {!showExpandedUI ? (
-          <Pressable
-            style={{ backgroundColor: colors.bg.secondary }}
-            className="h-10 w-10 items-center justify-center rounded-full active:opacity-70"
-            onPress={onTakePhoto}
-            disabled={sendingMessage}
-            accessibilityRole="button"
-            accessibilityLabel="Take photo"
-            accessibilityHint="Opens camera to take a photo">
-            <Ionicons
-              name="camera-outline"
-              size={24}
-              color={sendingMessage ? colors.text.tertiary : colors.primary}
-            />
-          </Pressable>
-        ) : (
-          <Pressable
-            style={{ backgroundColor: colors.bg.secondary }}
-            className="h-10 w-10 items-center justify-center rounded-full active:opacity-70"
-            onPress={() => setIsComposerExpanded(false)}
-            disabled={sendingMessage}
-            accessibilityRole="button"
-            accessibilityLabel="Collapse composer"
-            accessibilityHint="Collapse the message composer">
-            <Ionicons
-              name="chevron-forward"
-              size={24}
-              color={sendingMessage ? colors.text.tertiary : colors.primary}
-            />
-          </Pressable>
-        )}
-
-        {/* Gallery & Microphone buttons */}
-        {!showExpandedUI && (
-          <View
-            style={{
-              flexDirection: 'row',
-              gap: 8,
-            }}>
-            <Pressable
-              style={{ backgroundColor: colors.bg.secondary }}
-              className="h-10 w-10 items-center justify-center rounded-full active:opacity-70"
-              onPress={onPickImage}
+      {/* Main Input Container */}
+      <View className="flex-row items-center gap-2">
+        {/* Left Section: 3 Action Buttons */}
+        <View className="flex-row gap-1">
+          {!isComposerExpanded ? (
+            <TouchableOpacity
+              onPress={onTakePhoto}
               disabled={sendingMessage}
-              accessibilityRole="button"
-              accessibilityLabel="Pick image"
-              accessibilityHint="Opens library to pick an image">
+              className="items-center justify-center p-2"
+              activeOpacity={0.7}
+              hitSlop={8}>
               <Ionicons
-                name="image-outline"
+                name="camera"
                 size={24}
                 color={sendingMessage ? colors.text.tertiary : colors.primary}
               />
-            </Pressable>
-            <Pressable
-              style={{ backgroundColor: colors.bg.secondary }}
-              className="h-10 w-10 items-center justify-center rounded-full active:opacity-70"
-              onPress={onPickAudio}
-              disabled={sendingMessage}
-              accessibilityRole="button"
-              accessibilityLabel="Pick audio"
-              accessibilityHint="Opens library to pick audio">
-              <Ionicons
-                name="mic-outline"
-                size={24}
-                color={sendingMessage ? colors.text.tertiary : colors.primary}
-              />
-            </Pressable>
-          </View>
-        )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={handleCollapseComposer}
+              className="items-center justify-center p-2"
+              activeOpacity={0.7}
+              hitSlop={8}>
+              <Ionicons name="chevron-forward" size={24} color={colors.primary} />
+            </TouchableOpacity>
+          )}
 
-        {/* Text input */}
-        <View
+          {!isComposerExpanded && (
+            <>
+              <TouchableOpacity
+                onPress={onPickImage}
+                disabled={sendingMessage}
+                className="items-center justify-center p-2"
+                activeOpacity={0.7}
+                hitSlop={8}>
+                <Ionicons
+                  name="image"
+                  size={24}
+                  color={sendingMessage ? colors.text.tertiary : colors.primary}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onPickAudio}
+                disabled={sendingMessage}
+                className="items-center justify-center p-2"
+                activeOpacity={0.7}
+                hitSlop={8}>
+                <Ionicons
+                  name="mic"
+                  size={24}
+                  color={sendingMessage ? colors.text.tertiary : colors.primary}
+                />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        {/* Middle Section: Composer with Animated Width */}
+        <Animated.View
           style={{
+            width: composerWidth,
             backgroundColor: colors.input.bg,
             borderColor: colors.input.border,
           }}
-          className="flex-1 rounded-full border px-4">
+          className="flex-1 items-center rounded-full border">
           <TextInput
             ref={inputRef}
-            style={{
-              color: colors.input.text,
-              minHeight: 40,
-              maxHeight: 100,
-              paddingVertical: 8,
-            }}
-            className="text-base"
-            placeholder="Message..."
+            value={text}
+            onChangeText={setText}
+            placeholder={placeholder}
             placeholderTextColor={colors.input.placeholder}
-            value={messageText}
-            onChangeText={(text) => {
-              onChangeText(text);
-              if (text.trim().length > 0) {
-                setIsComposerExpanded(true);
-              }
-            }}
-            onSubmitEditing={onSend}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             multiline
             maxLength={1000}
-            submitBehavior="submit"
-            autoCapitalize="sentences"
-            accessibilityRole="text"
-            accessibilityLabel="Message input"
-            accessibilityHint="Type your message here"
+            className="w-full px-4 py-2 text-base"
+            style={{
+              color: colors.input.text,
+              maxHeight: 100,
+            }}
           />
-        </View>
+        </Animated.View>
 
-        {/* Send button */}
-        <Pressable
-          style={{ opacity: canSend ? 1 : 0.5 }}
-          className="h-10 px-3 items-center justify-center rounded-full active:opacity-70"
-          onPress={onSend}
-          disabled={!canSend}
-          accessibilityRole="button"
-          accessibilityLabel={sendingMessage ? 'Sending message' : 'Send message'}
-          accessibilityHint="Double tap to send message">
-          {sendingMessage ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <Text style={{ color: canSend ? colors.primary : colors.text.tertiary }} className="text-sm font-semibold">
-              Send
-            </Text>
-          )}
-        </Pressable>
+        {/* Right Section: Send Button */}
+        <TouchableOpacity
+          onPress={handleSend}
+          disabled={!text.trim() || sendingMessage}
+          activeOpacity={text.trim() && !sendingMessage ? 0.7 : 0.5}
+          className="items-center justify-center p-2">
+          <Ionicons
+            name="send"
+            size={24}
+            color={text.trim() && !sendingMessage ? colors.primary : colors.text.tertiary}
+          />
+        </TouchableOpacity>
       </View>
     </View>
   );

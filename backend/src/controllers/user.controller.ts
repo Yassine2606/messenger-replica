@@ -8,15 +8,20 @@ export class UserController {
   async searchUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
-      const { q } = req.query;
+      const { q, limit, before, after } = req.query;
 
       if (!q || typeof q !== 'string') {
         res.status(400).json({ error: 'Query parameter required' });
         return;
       }
 
-      const users = await userService.searchUsers(q, userId);
-      res.status(200).json(users);
+      const result = await userService.searchUsers(q, userId, {
+        limit: limit ? Number(limit) : 20,
+        before: before ? Number(before) : undefined,
+        after: after ? Number(after) : undefined,
+      });
+
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }
@@ -41,8 +46,15 @@ export class UserController {
   async getAllUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
-      const users = await userService.getAllUsers(userId);
-      res.status(200).json(users);
+      const { limit, before, after } = req.query;
+
+      const result = await userService.getAllUsers(userId, {
+        limit: limit ? Number(limit) : 50,
+        before: before ? Number(before) : undefined,
+        after: after ? Number(after) : undefined,
+      });
+
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }

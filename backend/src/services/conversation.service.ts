@@ -1,14 +1,24 @@
 import { Conversation, Message, MessageRead, User, ConversationParticipant } from '../models';
 import { AppError } from '../middleware';
-import { ConversationDTO, messageToDTO } from '../types';
+import { ConversationDTO, messageToDTO, PaginatedResponse, PaginationMetadata } from '../types';
 import { ReadStatus } from '../models/MessageRead';
 import { sequelize } from '../config/database';
+import { Op } from 'sequelize';
 
 export class ConversationService {
   /**
-   * Get all conversations for a user, ordered by most recent
+   * Get all conversations for a user with cursor-based pagination, ordered by most recent
    */
-  async getConversations(userId: number): Promise<ConversationDTO[]> {
+  async getConversations(
+    userId: number,
+    options: {
+      limit?: number;
+      before?: string;
+      after?: string;
+    } = {}
+  ): Promise<PaginatedResponse<ConversationDTO>> {
+    const limit = Math.min(options.limit || 20, 50);
+
     // Get conversation IDs where user is participant
     const participantRecords = await ConversationParticipant.findAll({
       where: { userId },
@@ -17,12 +27,39 @@ export class ConversationService {
 
     const conversationIds = participantRecords.map((p) => p.conversationId);
     if (conversationIds.length === 0) {
-      return [];
+      return {
+        data: [],
+        pagination: {
+          hasNext: false,
+          hasPrevious: false,
+        },
+      };
     }
 
-    // Get conversations with proper eager loading
+    const where: any = { id: { [Op.in]: conversationIds } };
+
+    // Parse cursor for pagination
+    if (options.before) {
+      const [updatedAt, id] = options.before.split('_').map(decodeURIComponent);
+      where[Op.or] = [
+        { updatedAt: { [Op.lt]: new Date(updatedAt) } },
+        {
+          [Op.and]: [{ updatedAt: new Date(updatedAt) }, { id: { [Op.lt]: parseInt(id) } }],
+        },
+      ];
+    } else if (options.after) {
+      const [updatedAt, id] = options.after.split('_').map(decodeURIComponent);
+      where[Op.or] = [
+        { updatedAt: { [Op.gt]: new Date(updatedAt) } },
+        {
+          [Op.and]: [{ updatedAt: new Date(updatedAt) }, { id: { [Op.gt]: parseInt(id) } }],
+        },
+      ];
+    }
+
+    // Fetch one extra conversation to determine if there are more
     const conversations = await Conversation.findAll({
-      where: { id: { [require('sequelize').Op.in]: conversationIds } },
+      where,
       include: [
         {
           model: User,
@@ -45,15 +82,78 @@ export class ConversationService {
             {
               model: MessageRead,
               as: 'reads',
-              attributes: ['id', 'messageId', 'userId', 'status', 'readAt', 'createdAt', 'updatedAt'],
+              attributes: [
+                'id',
+                'messageId',
+                'userId',
+                'status',
+                'readAt',
+                'createdAt',
+                'updatedAt',
+              ],
             },
           ],
         },
       ],
-      order: [['updatedAt', 'DESC']],
+      order: [
+        ['updatedAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+      limit: limit + 1, // Fetch one extra to check for more
     });
 
-    return Promise.all(conversations.map((conv) => this.conversationToDTO(conv, userId)));
+    // Check if there are more conversations
+    const hasMore = conversations.length > limit;
+    const actualConversations = hasMore ? conversations.slice(0, limit) : conversations;
+
+    // Determine pagination metadata
+    let hasNext = false;
+    let hasPrevious = false;
+    let nextCursor: string | undefined;
+    let previousCursor: string | undefined;
+
+    if (options.before) {
+      // We're paginating backward (older conversations)
+      hasPrevious = hasMore;
+      hasNext = true; // Since we have a 'before' cursor, there are newer conversations
+      if (hasPrevious) {
+        const firstConv = actualConversations[0];
+        previousCursor = `${encodeURIComponent(firstConv.updatedAt.toISOString())}_${firstConv.id}`;
+      }
+      nextCursor = options.before;
+    } else if (options.after) {
+      // We're paginating forward (newer conversations)
+      hasNext = hasMore;
+      hasPrevious = true; // Since we have an 'after' cursor, there are older conversations
+      if (hasNext) {
+        const lastConv = actualConversations[actualConversations.length - 1];
+        nextCursor = `${encodeURIComponent(lastConv.updatedAt.toISOString())}_${lastConv.id}`;
+      }
+      previousCursor = options.after;
+    } else {
+      // Initial load - no cursor
+      hasNext = hasMore;
+      if (hasNext) {
+        const lastConv = actualConversations[actualConversations.length - 1];
+        nextCursor = `${encodeURIComponent(lastConv.updatedAt.toISOString())}_${lastConv.id}`;
+      }
+    }
+
+    const pagination: PaginationMetadata = {
+      hasNext,
+      hasPrevious,
+      nextCursor,
+      previousCursor,
+    };
+
+    const data = await Promise.all(
+      actualConversations.map((conv) => this.conversationToDTO(conv, userId))
+    );
+
+    return {
+      data,
+      pagination,
+    };
   }
 
   /**
@@ -83,7 +183,15 @@ export class ConversationService {
             {
               model: MessageRead,
               as: 'reads',
-              attributes: ['id', 'messageId', 'userId', 'status', 'readAt', 'createdAt', 'updatedAt'],
+              attributes: [
+                'id',
+                'messageId',
+                'userId',
+                'status',
+                'readAt',
+                'createdAt',
+                'updatedAt',
+              ],
             },
           ],
         },
@@ -158,7 +266,10 @@ export class ConversationService {
   /**
    * Private helper: Find existing 1:1 conversation
    */
-  private async findOne1To1Conversation(userId: number, otherUserId: number): Promise<Conversation | null> {
+  private async findOne1To1Conversation(
+    userId: number,
+    otherUserId: number
+  ): Promise<Conversation | null> {
     const conversations = await Conversation.findAll({
       include: [
         {
@@ -166,14 +277,18 @@ export class ConversationService {
           as: 'participants',
           attributes: ['id'],
           through: { attributes: [] },
-          where: { id: { [require('sequelize').Op.in]: [userId, otherUserId] } },
+          where: { id: { [Op.in]: [userId, otherUserId] } },
         },
       ],
     });
 
     for (const conv of conversations) {
       const participants = (conv as any).participants as User[];
-      if (participants.length === 2 && participants.some((p) => p.id === userId) && participants.some((p) => p.id === otherUserId)) {
+      if (
+        participants.length === 2 &&
+        participants.some((p) => p.id === userId) &&
+        participants.some((p) => p.id === otherUserId)
+      ) {
         return conv;
       }
     }
@@ -184,7 +299,10 @@ export class ConversationService {
   /**
    * Convert Conversation model to DTO with unread count
    */
-  private async conversationToDTO(conversation: Conversation, userId: number): Promise<ConversationDTO> {
+  private async conversationToDTO(
+    conversation: Conversation,
+    userId: number
+  ): Promise<ConversationDTO> {
     const participants = ((conversation as any).participants || []) as User[];
     const messages = ((conversation as any).messages || []) as Message[];
     const lastMessage = messages[0] || null;
@@ -213,7 +331,6 @@ export class ConversationService {
    * Count unread messages for a user in conversation
    */
   private async countUnreadMessages(conversationId: number, userId: number): Promise<number> {
-    const { Op } = require('sequelize');
     const unreadCount = await MessageRead.count({
       where: {
         userId,

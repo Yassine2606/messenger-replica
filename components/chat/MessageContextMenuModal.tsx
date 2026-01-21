@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Pressable, Text, ActivityIndicator, Modal, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { useTheme } from '@/contexts';
 import type { Message } from '@/models';
 
@@ -45,7 +50,7 @@ export function MessageContextMenuModal({
     if (visible) {
       // Show modal and animate in
       setDisplayModal(true);
-      
+
       // Delay animation start on Android to ensure modal is rendered
       const delay = Platform.OS === 'android' ? 50 : 0;
       const timer = setTimeout(() => {
@@ -58,7 +63,7 @@ export function MessageContextMenuModal({
           easing: Easing.out(Easing.ease),
         });
       }, delay);
-      
+
       return () => clearTimeout(timer);
     } else {
       // Animate out first, then hide modal
@@ -70,12 +75,12 @@ export function MessageContextMenuModal({
         duration: 200,
         easing: Easing.in(Easing.ease),
       });
-      
+
       // Hide modal after animation completes
       const timer = setTimeout(() => {
         setDisplayModal(false);
       }, 200);
-      
+
       return () => clearTimeout(timer);
     }
   }, [visible, backdropOpacity, contentTranslateY]);
@@ -86,25 +91,51 @@ export function MessageContextMenuModal({
       transparent={true}
       animationType="none"
       statusBarTranslucent
-      onRequestClose={onClose}
-    >
+      onRequestClose={onClose}>
       <Animated.View style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, backdropStyle]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} disabled={isDeleting} />
       </Animated.View>
-      
-      <Animated.View style={[{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.bg.primary, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32 }, contentStyle]}>
-        <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text.tertiary, marginBottom: 16, textTransform: 'uppercase' }}>
+
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: colors.bg.primary,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            paddingHorizontal: 20,
+            paddingTop: 20,
+            paddingBottom: 32,
+          },
+          contentStyle,
+        ]}>
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: '600',
+            color: colors.text.tertiary,
+            marginBottom: 16,
+            textTransform: 'uppercase',
+          }}>
           Message Actions
         </Text>
 
         {/* Message Preview */}
         {message && (
-          <View style={{ marginBottom: 20, borderRadius: 8, backgroundColor: colors.bg.secondary, padding: 16 }}>
+          <View
+            style={{
+              marginBottom: 20,
+              borderRadius: 8,
+              backgroundColor: colors.bg.secondary,
+              padding: 16,
+            }}>
             <Text
               style={{ fontSize: 14, color: colors.text.primary }}
               numberOfLines={2}
-              ellipsizeMode="tail"
-            >
+              ellipsizeMode="tail">
               {message.content || '[Media Message]'}
             </Text>
           </View>
@@ -121,18 +152,15 @@ export function MessageContextMenuModal({
             paddingHorizontal: 12,
             paddingVertical: 12,
             borderRadius: 8,
-            opacity: (!canDelete || isDeleting) ? 0.5 : 1,
-          }}
-        >
+            opacity: !canDelete || isDeleting ? 0.5 : 1,
+          }}>
           {isDeleting ? (
             <ActivityIndicator size="small" color="#EF4444" />
           ) : (
             <Ionicons name="trash-outline" size={20} color="#EF4444" />
           )}
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 16, fontWeight: '500', color: '#DC2626' }}>
-              Delete
-            </Text>
+            <Text style={{ fontSize: 16, fontWeight: '500', color: '#DC2626' }}>Delete</Text>
             {!isOwnMessage && (
               <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 2 }}>
                 You can only delete your own messages
@@ -145,9 +173,15 @@ export function MessageContextMenuModal({
         <Pressable
           onPress={onClose}
           disabled={isDeleting}
-          style={{ paddingVertical: 12, marginTop: 12, alignItems: 'center', opacity: isDeleting ? 0.5 : 1 }}
-        >
-          <Text style={{ fontSize: 16, color: colors.text.secondary, fontWeight: '500' }}>Cancel</Text>
+          style={{
+            paddingVertical: 12,
+            marginTop: 12,
+            alignItems: 'center',
+            opacity: isDeleting ? 0.5 : 1,
+          }}>
+          <Text style={{ fontSize: 16, color: colors.text.secondary, fontWeight: '500' }}>
+            Cancel
+          </Text>
         </Pressable>
       </Animated.View>
     </Modal>

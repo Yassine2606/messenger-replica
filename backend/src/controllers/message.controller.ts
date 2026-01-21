@@ -10,7 +10,8 @@ export class MessageController {
   async sendMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user!.userId;
-      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } = req.body;
+      const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } =
+        req.body;
 
       const message = await messageService.sendMessage({
         conversationId,
@@ -44,13 +45,13 @@ export class MessageController {
       const { conversationId } = req.params;
       const { limit, before, after } = req.query;
 
-      const messages = await messageService.getMessages(Number(conversationId), userId, {
+      const result = await messageService.getMessages(Number(conversationId), userId, {
         limit: limit ? Number(limit) : 30,
         before: before ? Number(before) : undefined,
         after: after ? Number(after) : undefined,
       });
 
-      res.status(200).json(messages);
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }
@@ -66,9 +67,16 @@ export class MessageController {
       // Broadcast unified deletion event via Socket.IO
       try {
         const socketManager = getSocketManager();
-        socketManager.broadcastUnifiedMessageDeletion(message.conversationId, Number(messageId), userId);
+        socketManager.broadcastUnifiedMessageDeletion(
+          message.conversationId,
+          Number(messageId),
+          userId
+        );
       } catch (socketError) {
-        console.warn('[MessageController] Warning: Failed to broadcast deletion via socket:', socketError);
+        console.warn(
+          '[MessageController] Warning: Failed to broadcast deletion via socket:',
+          socketError
+        );
         // Don't fail the request if socket broadcast fails - message is already deleted
       }
 

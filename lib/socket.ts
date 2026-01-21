@@ -258,6 +258,62 @@ class SocketClient {
   }
 
   /**
+   * Mark messages as read in a conversation
+   * Sends read status update to backend
+   */
+  markMessagesAsRead(conversationId: number, messageIds: number[]): void {
+    if (messageIds.length === 0) return;
+    this.queueOrExecute(() => {
+      this.connection.getSocket()?.emit('message:read', {
+        conversationId,
+        messageIds,
+      });
+    });
+  }
+
+  /**
+   * Send a message via Socket.io with acknowledgment callback
+   * 
+   * This implements the "Ack callbacks" pattern from the blueprint:
+   * - Faster than waiting for a separate 'message:new' event
+   * - Callback fires when server confirms message was saved
+   * - Better UX: remove loading spinner immediately instead of waiting for broadcast
+   * 
+   * @param data Message payload
+   * @param onAck Callback when server confirms (receives sent message)
+   * @param onError Callback if send fails
+   */
+  sendMessageWithAck(
+    data: {
+      conversationId: number;
+      type: string;
+      content?: string;
+      mediaUrl?: string;
+      mediaMimeType?: string;
+      mediaDuration?: number;
+      replyToId?: number;
+    },
+    onAck?: (serverMessage: any) => void,
+    onError?: (error: any) => void
+  ): void {
+    this.queueOrExecute(() => {
+      const socket = this.connection.getSocket();
+      if (!socket) {
+        onError?.({ message: 'Socket not connected' });
+        return;
+      }
+
+      socket.emit('message:send', data, (response: any) => {
+        if (response?.success) {
+          onAck?.(response.message);
+        } else {
+          onError?.(response?.error || { message: 'Send failed' });
+        }
+      });
+    });
+  }
+
+  /**
    * Send presence ping to server to keep online status fresh
    * Non-critical operation - uses queueOrExecute to handle when socket is not ready
    */

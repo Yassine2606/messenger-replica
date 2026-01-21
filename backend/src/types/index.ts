@@ -38,13 +38,13 @@ export interface MessageReadDTO {
  */
 export interface ConversationDTO {
   id: number;
-  participants?: Array<{
+  participants?: {
     id: number;
     name: string;
     avatarUrl?: string;
     status?: string;
     lastSeen?: string;
-  }>;
+  }[];
   lastMessage?: Partial<MessageDTO>;
   lastMessageAt?: string;
   unreadCount: number;
@@ -78,10 +78,10 @@ export interface UnifiedMessageEvent {
   conversationId: number;
   message: MessageDTO;
   // Per-recipient conversation state with unread count specific to them
-  conversationUpdates: Array<{
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**
@@ -90,17 +90,17 @@ export interface UnifiedMessageEvent {
  */
 export interface UnifiedStatusUpdateEvent {
   conversationId: number;
-  updates: Array<{
+  updates: {
     messageId: number;
     userId: number;
     status: ReadStatus;
     readAt?: string;
-  }>;
+  }[];
   // Include updated unread counts for each user
-  conversationUpdates: Array<{
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**
@@ -111,10 +111,10 @@ export interface UnifiedMessageDeletionEvent {
   conversationId: number;
   deletedMessageIds: number[];
   // Include updated unread counts for each user (deletion might affect unread counts)
-  conversationUpdates: Array<{
+  conversationUpdates: {
     userId: number;
     unreadCount: number;
-  }>;
+  }[];
 }
 
 /**
@@ -156,11 +156,13 @@ export function messageToDTO(message: Message): MessageDTO {
     id: message.id,
     conversationId: message.conversationId,
     senderId: message.senderId,
-    sender: sender ? {
-      id: sender.id,
-      name: sender.name,
-      avatarUrl: sender.avatarUrl,
-    } : undefined,
+    sender: sender
+      ? {
+          id: sender.id,
+          name: sender.name,
+          avatarUrl: sender.avatarUrl,
+        }
+      : undefined,
     type: message.type,
     content: message.content,
     mediaUrl: message.mediaUrl,
@@ -181,4 +183,26 @@ export function messageToDTO(message: Message): MessageDTO {
     createdAt: message.createdAt.toISOString(),
     updatedAt: message.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Pagination types
+ */
+export interface CursorPaginationOptions {
+  limit?: number;
+  cursor?: string;
+  direction?: 'forward' | 'backward';
+}
+
+export interface PaginationMetadata {
+  hasNext: boolean;
+  hasPrevious: boolean;
+  nextCursor?: string;
+  previousCursor?: string;
+  total?: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: PaginationMetadata;
 }

@@ -10,7 +10,10 @@ export interface ConversationParticipantAttributes {
   updatedAt?: Date;
 }
 
-export class ConversationParticipant extends Model<ConversationParticipantAttributes> implements ConversationParticipantAttributes {
+export class ConversationParticipant
+  extends Model<ConversationParticipantAttributes>
+  implements ConversationParticipantAttributes
+{
   public conversationId!: ForeignKey<Conversation['id']>;
   public userId!: ForeignKey<User['id']>;
   public readonly createdAt!: Date;
