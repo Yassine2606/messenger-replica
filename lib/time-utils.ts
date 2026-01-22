@@ -79,6 +79,9 @@ export function shouldShowOnlineIndicator(isoTimestamp?: string | Date): boolean
  * @param date - ISO timestamp string or Date object
  * @returns Formatted date label string
  */
+const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 export function getDateLabel(date: Date | string): string {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
   const now = new Date();
@@ -90,7 +93,7 @@ export function getDateLabel(date: Date | string): string {
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
 
-  const diffDays = Math.floor((todayStart.getTime() - dateStart.getTime()) / 86400000);
+  const diffDays = Math.floor((todayStart.getTime() - dateStart.getTime()) / MILLIS_PER_DAY);
 
   // Today
   if (diffDays === 0) {
@@ -104,21 +107,26 @@ export function getDateLabel(date: Date | string): string {
 
   // Within the last 6 days (this week)
   if (diffDays > 0 && diffDays <= 6) {
-    return dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+    return WEEKDAYS[dateObj.getDay()];
   }
 
   // This year
   if (dateObj.getFullYear() === now.getFullYear()) {
-    return dateObj.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    });
+    return `${MONTHS[dateObj.getMonth()]} ${dateObj.getDate()}`;
   }
 
   // Different year
-  return dateObj.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return `${MONTHS[dateObj.getMonth()]} ${dateObj.getDate()}, ${dateObj.getFullYear()}`;
 }
+
+// Fast time formatter used across UI to avoid Intl/locale costs on Android
+export function formatTimeShort(date?: Date | string): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  let hours = d.getHours();
+  const minutes = d.getMinutes();
+  const isPM = hours >= 12;
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  const mins = minutes < 10 ? `0${minutes}` : `${minutes}`;
+  return `${hour12}:${mins}${isPM ? ' PM' : ' AM'}`;
+} 

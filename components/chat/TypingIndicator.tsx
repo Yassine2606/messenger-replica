@@ -10,7 +10,7 @@ interface TypingIndicatorProps {
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
-export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
+function TypingIndicatorComponent({ userName, visible }: TypingIndicatorProps) {
   const { colors } = useTheme();
   const opacity = useSharedValue(0);
   const height = useSharedValue(visible ? 1 : 0);
@@ -65,7 +65,7 @@ export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
   });
 
   return (
-    <AnimatedView style={[containerStyle, { pointerEvents: visible ? 'auto' : 'none' }]}>
+    <AnimatedView style={[containerStyle, { pointerEvents: visible ? 'auto' : 'none' }]}> 
       <View style={styles.container}>
         <Text style={styles.label}>{userName || 'User'} is typing</Text>
         <View style={styles.dotsContainer}>
@@ -77,3 +77,8 @@ export function TypingIndicator({ userName, visible }: TypingIndicatorProps) {
     </AnimatedView>
   );
 }
+
+export const TypingIndicator = React.memo(TypingIndicatorComponent, (prev, next) => {
+  return prev.visible === next.visible && prev.userName === next.userName;
+});
+TypingIndicator.displayName = 'TypingIndicator';

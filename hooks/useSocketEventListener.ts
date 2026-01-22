@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { socketClient } from '@/lib/socket';
 import { messageQueryKeys, conversationQueryKeys } from '@/lib/query-keys';
+import { prependMessageToPages } from '@/lib/message-cache';
 import {
   UnifiedMessageEvent,
   UnifiedStatusUpdateEvent,
@@ -15,270 +16,162 @@ import { useUserStore, useAuthStore } from '@/stores';
 /**
  * Socket-to-Query Bridge Hook
  * 
- * This hook implements the core pattern from the blueprint:
- * - Listen to Socket.io events
- * - Update React Query cache directly with setQueryData (not invalidation)
- * - Preserve scroll position and pagination state
- * - Use Zustand for ephemeral state only (typing, presence, connection)
- * 
- * Mount this hook in app/_layout.tsx for global event listening
+ * Listens to Socket.io events and updates React Query cache directly.
+ * Preserves scroll position and pagination state.
+ * Uses Zustand for ephemeral state only (typing, presence, connection).
  */
 export function useSocketEventListener() {
   const queryClient = useQueryClient();
   const { addTypingUser, removeTypingUser, setUserStatus } = useUserStore();
   const { user: currentUser } = useAuthStore();
+  const currentUserId = useMemo(() => currentUser?.id, [currentUser?.id]);
 
   useEffect(() => {
-    // ============================================================
-    // MESSAGE EVENTS
-    // ============================================================
+    // Helper: Get current user's unread count from updates
+    const getCurrentUserUnreadCount = (updates: any[]) =>
+      updates?.find(u => u.userId === currentUserId)?.unreadCount ?? 0;
 
-    /**
-     * message:new - New message received
-     * 
-     * Instead of invalidating the entire query (which causes refetch),
-     * we use setQueryData to manually add the message to the infinite scroll cache.
-     * This preserves scroll position and pagination state.
-     */
-    const unsubscribeMessageNew = socketClient.onMessageUnified(
-      (payload: UnifiedMessageEvent) => {
-        const { conversationId, message, conversationUpdates } = payload;
+    // ====== MESSAGE EVENTS ======
 
-        // Update the infinite messages query for this conversation
-        queryClient.setQueryData(
-          messageQueryKeys.byConversation(conversationId),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
+    const unsubMessage = socketClient.onMessageUnified((payload: UnifiedMessageEvent) => {
+      const { conversationId, message, conversationUpdates } = payload;
 
-            // Inverted FlatList: new messages appear at index 0 (bottom of screen)
-            return {
-              ...oldData,
-              pages: [
-                {
-                  ...oldData.pages[0],
-                  data: [message, ...oldData.pages[0].data],
+      // Update messages cache (prepend to newest page). Deduplicate to avoid double inserts.
+      queryClient.setQueryData(
+        messageQueryKeys.byConversation(conversationId),
+        (old: any) => {
+          if (!old?.pages) return old;
+
+          // Use helper to prepend and dedupe
+          return prependMessageToPages(old, message as any);
+        }
+      );
+
+      // Update conversations cache
+      queryClient.setQueryData(conversationQueryKeys.infinite(), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((c: any) =>
+              c.id === conversationId
+                ? { ...c, lastMessage: message, unreadCount: getCurrentUserUnreadCount(conversationUpdates) }
+                : c
+            ),
+          })),
+        };
+      });
+    });
+
+    const unsubStatus = socketClient.onStatusUnified((payload: UnifiedStatusUpdateEvent) => {
+      const { conversationId, updates, conversationUpdates } = payload;
+
+      // Update message reads
+      queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((msg: Message) => {
+              const update = updates.find(u => u.messageId === msg.id);
+              return !update ? msg : {
+                ...msg,
+                reads: (msg.reads || []).map(r =>
+                  r.userId === update.userId
+                    ? { ...r, status: update.status, createdAt: update.readAt }
+                    : r
+                ),
+              };
+            }),
+          })),
+        };
+      });
+
+      // Update conversation with new unread counts
+      queryClient.setQueryData(conversationQueryKeys.infinite(), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((c: any) => {
+              if (c.id !== conversationId) return c;
+              const lastMsg = c.lastMessage;
+              return {
+                ...c,
+                unreadCount: getCurrentUserUnreadCount(conversationUpdates),
+                lastMessage: !lastMsg ? lastMsg : {
+                  ...lastMsg,
+                  reads: (lastMsg.reads || []).map((r: any) => {
+                    const u = updates.find(st => st.messageId === lastMsg.id && st.userId === r.userId);
+                    return u ? { ...r, status: u.status, createdAt: u.readAt } : r;
+                  }),
                 },
-                ...oldData.pages.slice(1),
-              ],
-            };
-          }
-        );
+              };
+            }),
+          })),
+        };
+      });
+    });
 
-        // Manually update conversations cache with new last message and unread counts
-        // This is instant and doesn't require a refetch
-        queryClient.setQueryData(
-          conversationQueryKeys.infinite(),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
+    const unsubDelete = socketClient.onMessageDeleted((payload: UnifiedMessageDeletionEvent) => {
+      const { conversationId, deletedMessageIds } = payload;
 
-            // Find current user's unread count for this conversation
-            const currentUserUnreadCount = conversationUpdates?.find(
-              (update) => update.userId === currentUser?.id
-            )?.unreadCount ?? 0;
+      // Mark deleted in messages cache
+      queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((m: Message) =>
+              deletedMessageIds.includes(m.id) ? { ...m, isDeleted: true } : m
+            ),
+          })),
+        };
+      });
 
-            // Update the specific conversation in the cache
-            const updatedPages = oldData.pages.map((page: any) => ({
-              ...page,
-              data: page.data.map((conv: any) => {
-                if (conv.id === conversationId) {
-                  return {
-                    ...conv,
-                    lastMessage: message,
-                    unreadCount: currentUserUnreadCount,
-                  };
-                }
-                return conv;
-              }),
-            }));
+      // Mark deleted in conversations lastMessage
+      queryClient.setQueryData(conversationQueryKeys.infinite(), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((c: any) =>
+              c.id === conversationId && c.lastMessage && deletedMessageIds.includes(c.lastMessage.id)
+                ? { ...c, lastMessage: { ...c.lastMessage, isDeleted: true } }
+                : c
+            ),
+          })),
+        };
+      });
+    });
 
-            return { ...oldData, pages: updatedPages };
-          }
-        );
-      }
+    // ====== EPHEMERAL EVENTS (Zustand) ======
+
+    const unsubTypingStart = socketClient.onTypingStart(({ conversationId, userId }: SocketTypingPayload) =>
+      addTypingUser(conversationId, userId)
     );
 
-    /**
-     * message:status - Status updates (read/delivered)
-     * 
-     * Update message cache with new read/delivered status without full refetch.
-     * Also update conversation cache with new unread counts and updated lastMessage.
-     */
-    const unsubscribeMessageStatus = socketClient.onStatusUnified(
-      (payload: UnifiedStatusUpdateEvent) => {
-        const { conversationId, updates, conversationUpdates } = payload;
-
-        // Update message statuses in the cache
-        queryClient.setQueryData(
-          messageQueryKeys.byConversation(conversationId),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
-
-            // Update read status for each message
-            const updatedPages = oldData.pages.map((page: any) => ({
-              ...page,
-              data: page.data.map((msg: Message) => {
-                const statusUpdate = updates.find((u) => u.messageId === msg.id);
-                if (!statusUpdate) return msg;
-
-                // Update the reads array with new status
-                return {
-                  ...msg,
-                  reads: (msg.reads || []).map((read) =>
-                    read.userId === statusUpdate.userId
-                      ? { ...read, status: statusUpdate.status, createdAt: statusUpdate.readAt }
-                      : read
-                  ),
-                };
-              }),
-            }));
-
-            return { ...oldData, pages: updatedPages };
-          }
-        );
-
-        // Update conversation with new unread counts and update lastMessage reads
-        queryClient.setQueryData(
-          conversationQueryKeys.infinite(),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
-
-            // Find current user's unread count
-            const currentUserUnreadCount = conversationUpdates?.find(
-              (update) => update.userId === currentUser?.id
-            )?.unreadCount ?? 0;
-
-            // Update the specific conversation in the cache
-            const updatedPages = oldData.pages.map((page: any) => ({
-              ...page,
-              data: page.data.map((conv: any) => {
-                if (conv.id === conversationId) {
-                  // Also update lastMessage's reads array to reflect new status
-                  return {
-                    ...conv,
-                    unreadCount: currentUserUnreadCount,
-                    lastMessage: conv.lastMessage
-                      ? {
-                          ...conv.lastMessage,
-                          reads: (conv.lastMessage.reads || []).map((read: any) => {
-                            const statusUpdate = updates.find((u) => u.messageId === conv.lastMessage.id && u.userId === read.userId);
-                            return statusUpdate
-                              ? { ...read, status: statusUpdate.status, createdAt: statusUpdate.readAt }
-                              : read;
-                          }),
-                        }
-                      : conv.lastMessage,
-                  };
-                }
-                return conv;
-              }),
-            }));
-
-            return { ...oldData, pages: updatedPages };
-          }
-        );
-      }
+    const unsubTypingStop = socketClient.onTypingStop(({ conversationId, userId }: SocketTypingPayload) =>
+      removeTypingUser(conversationId, userId)
     );
 
-    /**
-     * message:delete - Message was deleted
-     * 
-     * Remove or mark message as deleted in cache without refetch.
-     */
-    const unsubscribeMessageDeleted = socketClient.onMessageDeleted(
-      (payload: UnifiedMessageDeletionEvent) => {
-        const { conversationId, deletedMessageIds } = payload;
-
-        queryClient.setQueryData(
-          messageQueryKeys.byConversation(conversationId),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
-
-            // Option 1: Mark as deleted (preserves message count)
-            // Option 2: Remove from array (cleaner UI but lose pagination alignment)
-            // Using Option 1 to preserve pagination state
-            const updatedPages = oldData.pages.map((page: any) => ({
-              ...page,
-              data: page.data.map((msg: Message) =>
-                deletedMessageIds.includes(msg.id) ? { ...msg, isDeleted: true } : msg
-              ),
-            }));
-
-            return { ...oldData, pages: updatedPages };
-          }
-        );
-
-        // Update conversations (potential new last message after deletion)
-        queryClient.setQueryData(
-          conversationQueryKeys.infinite(),
-          (oldData: any) => {
-            if (!oldData?.pages) return oldData;
-
-            // If lastMessage was deleted, mark it as deleted instead of refetching
-            const updatedPages = oldData.pages.map((page: any) => ({
-              ...page,
-              data: page.data.map((conv: any) => {
-                if (conv.id === conversationId && conv.lastMessage && deletedMessageIds.includes(conv.lastMessage.id)) {
-                  return {
-                    ...conv,
-                    lastMessage: { ...conv.lastMessage, isDeleted: true },
-                  };
-                }
-                return conv;
-              }),
-            }));
-
-            return { ...oldData, pages: updatedPages };
-          }
-        );
-      }
+    const unsubStatus2 = socketClient.onUserStatus(({ userId, status, lastSeen }: SocketUserStatusPayload) =>
+      setUserStatus(userId, status, lastSeen || new Date().toISOString())
     );
 
-    // ============================================================
-    // TYPING EVENTS (Ephemeral State - Use Zustand)
-    // ============================================================
-
-    const unsubscribeTypingStart = socketClient.onTypingStart((data: SocketTypingPayload) => {
-      const { conversationId, userId } = data;
-      addTypingUser(conversationId, userId);
-    });
-
-    const unsubscribeTypingStop = socketClient.onTypingStop((data: SocketTypingPayload) => {
-      const { conversationId, userId } = data;
-      removeTypingUser(conversationId, userId);
-    });
-
-    // ============================================================
-    // PRESENCE EVENTS (Ephemeral State - Use Zustand)
-    // ============================================================
-
-    const unsubscribePresenceJoined = socketClient.onPresenceJoined((data: any) => {
-      // User joined a conversation (only informational for now)
-      // Could be used to show "User is typing" or "User is viewing" badges
-    });
-
-    const unsubscribePresenceLeft = socketClient.onPresenceLeft((data: any) => {
-      // User left a conversation
-    });
-
-    // ============================================================
-    // USER STATUS EVENTS (Ephemeral State - Use Zustand)
-    // ============================================================
-
-    const unsubscribeUserStatus = socketClient.onUserStatus((data: SocketUserStatusPayload) => {
-      const { userId, status, lastSeen } = data;
-      setUserStatus(userId, status, lastSeen || new Date().toISOString());
-    });
-
-    // Cleanup: Unsubscribe from all events
+    // Cleanup
     return () => {
-      unsubscribeMessageNew();
-      unsubscribeMessageStatus();
-      unsubscribeMessageDeleted();
-      unsubscribeTypingStart();
-      unsubscribeTypingStop();
-      unsubscribePresenceJoined();
-      unsubscribePresenceLeft();
-      unsubscribeUserStatus();
+      unsubMessage();
+      unsubStatus();
+      unsubDelete();
+      unsubTypingStart();
+      unsubTypingStop();
+      unsubStatus2();
     };
-  }, [queryClient, addTypingUser, removeTypingUser, setUserStatus]);
+  }, [queryClient, addTypingUser, removeTypingUser, setUserStatus, currentUserId]);
 }

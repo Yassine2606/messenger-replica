@@ -6,6 +6,7 @@ import {
   useInfiniteQuery,
 } from '@tanstack/react-query';
 import { Message, MessageType, User, PaginatedResponse } from '@/models';
+import { prependMessageToPages } from '@/lib/message-cache';
 import { messageQueryKeys } from '@/lib/query-keys';
 import { messageService } from '@/services';
 import { useMessageStore, useAuthStore } from '@/stores';
@@ -17,7 +18,7 @@ interface UseGetMessagesOptions {
 }
 
 /**
- * Hook to fetch messages for a conversation with real-time updates
+ * Hook to fetch messages for a conversation with real-time updates via socket
  */
 export function useGetMessages(
   conversationId: number | null,
@@ -28,11 +29,17 @@ export function useGetMessages(
     queryKey: messageQueryKeys.byConversation(conversationId || 0),
     queryFn: async () => {
       if (!conversationId) throw new Error('Conversation ID is required');
-      return messageService.getMessages(conversationId, options);
+      const res = await messageService.getMessages(conversationId, options);
+      // Normalize messages to include numeric timestamp for fast comparisons
+      const normalized = {
+        ...res,
+        data: res.data.map((m) => ({ ...m, createdAtMs: Date.parse(m.createdAt) })),
+      };
+      return normalized;
     },
     enabled: enabled && !!conversationId,
-    staleTime: Infinity, // Invalidate via socket events only
-    gcTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: Infinity, // Socket handles all updates
+    gcTime: 5 * 60 * 1000,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
@@ -52,10 +59,15 @@ export function useInfiniteMessages(conversationId: number | null, enabled = tru
     queryKey: messageQueryKeys.byConversation(conversationId || 0),
     queryFn: async ({ pageParam }: { pageParam?: string | number }) => {
       if (!conversationId) throw new Error('Conversation ID is required');
-      return messageService.getMessages(conversationId, {
+      const res = await messageService.getMessages(conversationId, {
         limit: 20,
         before: pageParam ? Number(pageParam) : undefined,
       });
+
+      return {
+        ...res,
+        data: res.data.map((m) => ({ ...m, createdAtMs: Date.parse(m.createdAt) })),
+      };
     },
     enabled: enabled && !!conversationId,
     initialPageParam: undefined as any,
@@ -154,24 +166,10 @@ export function useSendMessage(conversationId: number) {
             };
           }
 
-          // Handle infinite query pages structure
+          // Handle infinite query pages structure (pages[0] is the newest page)
           if (old.pages && Array.isArray(old.pages)) {
-            const newPages = [...old.pages];
-            const lastPageIdx = newPages.length - 1;
-
-            // Append to last page
-            if (lastPageIdx >= 0 && newPages[lastPageIdx]?.data) {
-              const lastPageData = newPages[lastPageIdx].data || [];
-              const exists = lastPageData.some((m: Message) => m.id === serverMessage.id);
-              if (!exists) {
-                newPages[lastPageIdx] = {
-                  ...newPages[lastPageIdx],
-                  data: [...lastPageData, serverMessage],
-                };
-              }
-            }
-
-            return { ...old, pages: newPages };
+            // Use helper to prepend and dedupe
+          return prependMessageToPages(old, serverMessage as Message);
           }
 
           return old;
@@ -192,6 +190,7 @@ export function useSendMessage(conversationId: number) {
 
 /**
  * Hook to delete a message
+ * Optimistic update: remove immediately, socket confirms deletion
  */
 export function useDeleteMessage(conversationId: number) {
   const queryClient = useQueryClient();
@@ -201,23 +200,18 @@ export function useDeleteMessage(conversationId: number) {
       await messageService.deleteMessage(messageId);
     },
     onSuccess: (_, messageId) => {
-      // Update cache for infinite query (which uses pages structure with PaginatedResponse)
+      // Optimistic: mark as deleted immediately in cache
       queryClient.setQueryData(messageQueryKeys.byConversation(conversationId), (old: any) => {
-        if (!old || !old.pages) return old;
-
-        const newPages = old.pages.map((page: any) => {
-          if (page?.data && Array.isArray(page.data)) {
-            // PaginatedResponse structure
-            return {
-              ...page,
-              data: page.data.map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m)),
-            };
-          }
-          // Legacy array structure
-          return (page || []).map((m: Message) => (m.id === messageId ? { ...m, isDeleted: true } : m));
-        });
-
-        return { ...old, pages: newPages };
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.map((m: Message) =>
+              m.id === messageId ? { ...m, isDeleted: true } : m
+            ),
+          })),
+        };
       });
     },
   });

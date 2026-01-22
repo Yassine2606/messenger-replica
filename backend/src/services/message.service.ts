@@ -419,6 +419,20 @@ export class MessageService {
 
     return message;
   }
+
+  /**
+   * Bulk upsert message reads - single query for multiple rows
+   */
+  async bulkUpsertMessageReads(
+    rows: Array<{ messageId: number; userId: number; status: ReadStatus; readAt: Date }>
+  ): Promise<void> {
+    if (!rows.length) return;
+
+    await MessageRead.bulkCreate(rows as any, {
+      updateOnDuplicate: ['status', 'readAt'],
+      ignoreDuplicates: false,
+    });
+  }
 }
 
 export const messageService = new MessageService();

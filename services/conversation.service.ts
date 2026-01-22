@@ -38,6 +38,13 @@ export class ConversationService {
   async createOrGetConversation(otherUserId: number): Promise<Conversation> {
     return apiClient.post<Conversation>('/conversations', { otherUserId });
   }
+
+  /**
+   * Leave a conversation (remove current user from it)
+   */
+  async leaveConversation(conversationId: number): Promise<void> {
+    return apiClient.delete<void>(`/conversations/${conversationId}`);
+  }
 }
 
 export const conversationService = new ConversationService();

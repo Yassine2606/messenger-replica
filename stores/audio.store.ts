@@ -24,6 +24,9 @@ interface AudioControllerState {
   // ID of currently playing audio message (null if nothing playing)
   currentlyPlayingMessageId: number | null;
 
+  // Whether the user is currently recording (global indicator)
+  isRecording: boolean;
+
   // Maps messageId -> playback progress (0-1)
   playbackProgress: Map<number, number>;
 
@@ -35,6 +38,7 @@ interface AudioControllerState {
 
   // Actions
   setCurrentlyPlaying: (messageId: number | null) => void;
+  setIsRecording: (isRecording: boolean) => void;
   updateProgress: (messageId: number, progress: number) => void;
   setLoading: (messageId: number, isLoading: boolean) => void;
   setError: (messageId: number, error: string | null) => void;
@@ -43,6 +47,7 @@ interface AudioControllerState {
 
 export const useAudioStore = create<AudioControllerState>((set) => ({
   currentlyPlayingMessageId: null,
+  isRecording: false,
   playbackProgress: new Map(),
   isLoading: new Map(),
   errors: new Map(),
@@ -51,6 +56,10 @@ export const useAudioStore = create<AudioControllerState>((set) => ({
     set(() => ({
       currentlyPlayingMessageId: messageId,
     }));
+  },
+
+  setIsRecording: (isRecording) => {
+    set(() => ({ isRecording }));
   },
 
   updateProgress: (messageId, progress) => {
@@ -88,6 +97,7 @@ export const useAudioStore = create<AudioControllerState>((set) => ({
   clearAll: () => {
     set(() => ({
       currentlyPlayingMessageId: null,
+      isRecording: false,
       playbackProgress: new Map(),
       isLoading: new Map(),
       errors: new Map(),

@@ -43,6 +43,17 @@ export class ConversationController {
       next(error);
     }
   }
+
+  async leaveConversation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const userId = req.user!.userId;
+      const { conversationId } = req.params;
+      await conversationService.leaveConversation(Number(conversationId), userId);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const conversationController = new ConversationController();

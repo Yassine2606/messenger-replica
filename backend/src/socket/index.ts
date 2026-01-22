@@ -4,14 +4,17 @@ import { config } from '../config';
 import { messageService, conversationService, userService } from '../services';
 import { authService } from '../services/auth.service';
 import {
-  UnifiedMessageEvent,
-  UnifiedStatusUpdateEvent,
   UnifiedMessageDeletionEvent,
   SocketUserStatusPayload,
   messageToDTO,
 } from '../types';
 import { AppError } from '../middleware';
 import { ReadStatus } from '../models/MessageRead';
+import {
+  batchMarkMessages,
+  createMessageEvent,
+  createStatusEvent,
+} from './helpers';
 
 type AuthenticatedSocket = Socket & { userId?: number };
 
@@ -30,7 +33,12 @@ export class SocketManager {
         origin: config.cors.origin,
         credentials: true,
       },
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000,
+        skipMiddlewares: true,
+      },
+      maxHttpBufferSize: 10 * 1024 * 1024,
     });
 
     this.setupMiddleware();
@@ -102,13 +110,7 @@ export class SocketManager {
   }
 
   /**
-   * Handle message send - with Socket.io ACKNOWLEDGMENT
-   * 
-   * Implements the "Ack Pattern" from blueprint:
-   * - Client sends message with handler callback
-   * - Server processes and sends ack immediately
-   * - Much faster than waiting for 'message:new' event to come back
-   * - Client removes loading spinner on ack (not waiting for full broadcast)
+   * Handle message send with batched mark-as-read/delivered
    */
   private async handleMessageSend(
     socket: AuthenticatedSocket,
@@ -120,29 +122,16 @@ export class SocketManager {
       const { conversationId, type, content, mediaUrl, mediaMimeType, mediaDuration, replyToId } =
         data;
 
-      // Validate required fields
-      if (!conversationId || typeof conversationId !== 'number') {
-        socket.emit('error', { event: 'message:send', message: 'Valid conversation ID required' });
-        return;
+      if (!conversationId || !type) {
+        throw new AppError(400, 'Missing required fields');
       }
 
-      if (!type || typeof type !== 'string') {
-        socket.emit('error', { event: 'message:send', message: 'Message type required' });
-        return;
+      if (type === 'text' && (!content?.trim())) {
+        throw new AppError(400, 'Text content required');
       }
 
-      // Validate content based on type
-      if (
-        type === 'text' &&
-        (!content || typeof content !== 'string' || content.trim().length === 0)
-      ) {
-        socket.emit('error', { event: 'message:send', message: 'Text content required' });
-        return;
-      }
-
-      if ((type === 'image' || type === 'audio') && (!mediaUrl || typeof mediaUrl !== 'string')) {
-        socket.emit('error', { event: 'message:send', message: 'Media URL required' });
-        return;
+      if ((type === 'image' || type === 'audio') && !mediaUrl) {
+        throw new AppError(400, 'Media URL required');
       }
 
       // Create message
@@ -157,94 +146,44 @@ export class SocketManager {
         replyToId,
       });
 
-      // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, userId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
+      
+      // Batch mark messages by status
+      const activeViewers = this.activeConversationViewers.get(conversationId) || new Set();
+      const readRecipients = participantIds.filter(id => id !== userId && activeViewers.has(id));
+      const deliveredRecipients = participantIds.filter(id => id !== userId && 
+        !activeViewers.has(id) && this.userSessions.has(id));
 
-      // Mark messages as delivered/read for online users based on their state
-      const activeViewers = this.activeConversationViewers.get(conversationId);
-      const messagesToMarkDelivered: number[] = [];
-      const messagesToMarkRead: number[] = [];
-
-      for (const participant of participants) {
-        if (participant.id && participant.id !== userId) {
-          const isOnline = this.userSessions.has(participant.id);
-          const isActiveViewer = activeViewers?.has(participant.id);
-
-          if (isActiveViewer) {
-            messagesToMarkRead.push(participant.id);
-          } else if (isOnline) {
-            messagesToMarkDelivered.push(participant.id);
-          }
-        }
+      if (readRecipients.length) {
+        await batchMarkMessages([message.id], readRecipients, ReadStatus.READ, messageService);
+      }
+      if (deliveredRecipients.length) {
+        await batchMarkMessages([message.id], deliveredRecipients, ReadStatus.DELIVERED, messageService);
       }
 
-      // Batch mark as read and delivered
-      if (messagesToMarkRead.length > 0) {
-        for (const recipientId of messagesToMarkRead) {
-          await messageService.markAsRead([message.id], recipientId);
-        }
-      }
-      if (messagesToMarkDelivered.length > 0) {
-        for (const recipientId of messagesToMarkDelivered) {
-          await messageService.markAsDelivered([message.id], recipientId);
-        }
-      }
-
-      // Reload message with final state
+      // Fetch and broadcast
       const reloadedMessage = await messageService.getMessageWithRelations(message.id);
-      const messageWithReads = messageToDTO(reloadedMessage);
-
-      // Get unread counts for all participants (SINGLE QUERY instead of N+1)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(
+      const event = await createMessageEvent(
         conversationId,
-        participantIds
+        messageToDTO(reloadedMessage),
+        participantIds,
+        messageService
       );
 
-      // Create unified event with message + per-recipient unread counts
-      const unifiedEvent: UnifiedMessageEvent = {
-        conversationId,
-        message: messageWithReads,
-        conversationUpdates: participantIds.map((id) => ({
-          userId: id,
-          unreadCount: unreadCounts.get(id) || 0,
-        })),
-      };
+      this.io.to(`conversation:${conversationId}`).emit('message:unified', event);
+      this.io.to('conversations').emit('message:unified', event);
 
-      // Send single consolidated event to entire conversation
-      this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('message:unified', unifiedEvent);
-
-      // ⭐ Send acknowledgment callback - client removes spinner immediately
-      // No need to wait for broadcast event
-      if (ack) {
-        ack({
-          success: true,
-          message: messageWithReads,
-        });
-      }
+      ack?.({ success: true, message: messageToDTO(reloadedMessage) });
     } catch (error) {
-      const message = error instanceof AppError ? error.message : 'Failed to send message';
-      socket.emit('error', {
-        event: 'message:send',
-        message,
-      });
-      // Send error ack if provided
-      if (ack) {
-        ack({
-          success: false,
-          error: message,
-        });
-      }
+      const msg = error instanceof AppError ? error.message : 'Failed to send message';
+      socket.emit('error', { event: 'message:send', message: msg });
+      ack?.({ success: false, error: msg });
     }
   }
 
   /**
-   * Handle message read status update - BATCHED UNIFIED EVENT
-   * Combines multiple read updates into one event with unread count changes
+   * Handle message read status - batch update
    */
   private async handleMessageRead(
     socket: AuthenticatedSocket,
@@ -254,71 +193,39 @@ export class SocketManager {
     try {
       const { messageId, messageIds, conversationId } = data;
 
-      // Validate conversation ID
-      if (!conversationId || typeof conversationId !== 'number') {
-        socket.emit('error', { event: 'message:read', message: 'Valid conversation ID required' });
-        return;
-      }
+      if (!conversationId) throw new AppError(400, 'Conversation ID required');
 
       const idsToMark = messageIds || (messageId ? [messageId] : []);
+      if (!idsToMark.length) throw new AppError(400, 'No message IDs provided');
 
-      if (idsToMark.length === 0) {
-        socket.emit('error', { event: 'message:read', message: 'No message IDs provided' });
-        return;
-      }
+      // Batch mark all as read for this user
+      await batchMarkMessages(idsToMark, [userId], ReadStatus.READ, messageService);
 
-      // Validate message IDs
-      if (!Array.isArray(idsToMark) || !idsToMark.every((id) => typeof id === 'number' && id > 0)) {
-        socket.emit('error', { event: 'message:read', message: 'Invalid message IDs' });
-        return;
-      }
-
-      await messageService.markAsRead(idsToMark, userId);
-
-      // Get conversation to find all participants
+      // Notify conversation
       const conversation = await conversationService.getConversation(conversationId, userId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-      // Get unread counts for all participants (SINGLE QUERY)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(
+      const event = await createStatusEvent(
         conversationId,
-        participantIds
+        idsToMark,
+        userId,
+        ReadStatus.READ,
+        participantIds,
+        messageService
       );
 
-      // Create batched unified event with all status updates
-      const readAt = new Date().toISOString();
-      const unifiedEvent: UnifiedStatusUpdateEvent = {
-        conversationId,
-        updates: idsToMark.map((id) => ({
-          messageId: id,
-          userId,
-          status: ReadStatus.READ,
-          readAt,
-        })),
-        conversationUpdates: participantIds.map((id) => ({
-          userId: id,
-          unreadCount: unreadCounts.get(id) || 0,
-        })),
-      };
-
-      // Send single consolidated event to entire conversation
-      this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('status:unified', unifiedEvent);
+      this.io.to(`conversation:${conversationId}`).emit('status:unified', event);
+      this.io.to('conversations').emit('status:unified', event);
     } catch (error) {
-      const message = error instanceof AppError ? error.message : 'Failed to update message status';
       socket.emit('error', {
         event: 'message:read',
-        message,
+        message: error instanceof AppError ? error.message : 'Failed to mark as read',
       });
     }
   }
 
   /**
-   * Handle message delivered status update - UNIFIED EVENT
-   * Triggered when client explicitly marks a message as delivered
+   * Handle message delivered status
    */
   private async handleMessageDelivered(
     socket: AuthenticatedSocket,
@@ -327,66 +234,37 @@ export class SocketManager {
   ): Promise<void> {
     try {
       const { messageId } = data;
+      if (!messageId) throw new AppError(400, 'Message ID required');
 
-      if (!messageId) {
-        socket.emit('error', { event: 'message:delivered', message: 'Message ID required' });
-        return;
-      }
-
-      // Get message to find conversation
       const message = await messageService.getMessageWithRelations(messageId);
-      const conversationId = message.conversationId;
+      const { conversationId } = message;
 
-      // Mark as delivered
-      await messageService.markAsDelivered([messageId], userId);
+      await batchMarkMessages([messageId], [userId], ReadStatus.DELIVERED, messageService);
 
-      // Get conversation for unread count calculation
       const conversation = await conversationService.getConversation(conversationId, userId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-      // Get unread counts
-      const unreadCounts = await messageService.getUnreadCountsForConversation(
+      const event = await createStatusEvent(
         conversationId,
-        participantIds
+        [messageId],
+        userId,
+        ReadStatus.DELIVERED,
+        participantIds,
+        messageService
       );
 
-      // Create unified event
-      const readAt = new Date().toISOString();
-      const unifiedEvent: UnifiedStatusUpdateEvent = {
-        conversationId,
-        updates: [
-          {
-            messageId,
-            userId,
-            status: ReadStatus.DELIVERED,
-            readAt,
-          },
-        ],
-        conversationUpdates: participantIds.map((id) => ({
-          userId: id,
-          unreadCount: unreadCounts.get(id) || 0,
-        })),
-      };
-
-      // Emit to conversation
-      this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('status:unified', unifiedEvent);
+      this.io.to(`conversation:${conversationId}`).emit('status:unified', event);
+      this.io.to('conversations').emit('status:unified', event);
     } catch (error) {
-      const message =
-        error instanceof AppError ? error.message : 'Failed to mark message as delivered';
       socket.emit('error', {
         event: 'message:delivered',
-        message,
+        message: error instanceof AppError ? error.message : 'Failed to mark as delivered',
       });
     }
   }
 
   /**
-   * Handle message delete - UNIFIED EVENT
-   * Sends consolidated event when a message is deleted
+   * Handle message delete
    */
   private async handleMessageDelete(
     socket: AuthenticatedSocket,
@@ -395,58 +273,37 @@ export class SocketManager {
   ): Promise<void> {
     try {
       const { messageId, conversationId } = data;
+      if (!messageId || !conversationId) throw new AppError(400, 'Missing required fields');
 
-      if (!messageId) {
-        socket.emit('error', { event: 'message:delete', message: 'Message ID required' });
-        return;
-      }
-
-      if (!conversationId || typeof conversationId !== 'number') {
-        socket.emit('error', {
-          event: 'message:delete',
-          message: 'Valid conversation ID required',
-        });
-        return;
-      }
-
-      // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, userId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-      // Get unread counts for all participants
       const unreadCounts = await messageService.getUnreadCountsForConversation(
         conversationId,
         participantIds
       );
 
-      // Create unified deletion event
-      const unifiedEvent: UnifiedMessageDeletionEvent = {
+      const event: UnifiedMessageDeletionEvent = {
         conversationId,
         deletedMessageIds: [messageId],
-        conversationUpdates: participantIds.map((id) => ({
+        conversationUpdates: participantIds.map(id => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
       };
 
-      // Send single consolidated event to entire conversation
-      this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('message:deleted', unifiedEvent);
+      this.io.to(`conversation:${conversationId}`).emit('message:deleted', event);
+      this.io.to('conversations').emit('message:deleted', event);
     } catch (error) {
-      const message = error instanceof AppError ? error.message : 'Failed to delete message';
       socket.emit('error', {
-        event: 'message:delivered',
-        message,
+        event: 'message:delete',
+        message: error instanceof AppError ? error.message : 'Failed to delete message',
       });
     }
   }
 
   /**
-   * Handle conversation join (user enters chat) - UNIFIED PATTERN
-   * Auto-marks unread messages as read, sends consolidated event
+   * Handle conversation join - auto-mark unread as read
    */
   private async handleConversationJoin(
     socket: AuthenticatedSocket,
@@ -456,75 +313,47 @@ export class SocketManager {
     try {
       const { conversationId } = data;
 
-      // Prevent duplicate joins from same socket
-      const socketRooms = this.socketConversations.get(socket.id);
-      if (socketRooms?.has(conversationId)) {
-        return;
-      }
+      const socketRooms = this.socketConversations.get(socket.id) || new Set();
+      if (socketRooms.has(conversationId)) return;
 
-      // Verify user is participant
       const conversation = await conversationService.getConversation(conversationId, userId);
-      if (!conversation) {
-        socket.emit('error', { event: 'conversation:join', message: 'Access denied' });
-        return;
-      }
+      if (!conversation) throw new AppError(403, 'Access denied');
 
-      // Join socket to conversation room
       socket.join(`conversation:${conversationId}`);
-      socketRooms?.add(conversationId);
+      socketRooms.add(conversationId);
 
-      // Track user as active viewer
+      // Mark as active viewer
       if (!this.activeConversationViewers.has(conversationId)) {
         this.activeConversationViewers.set(conversationId, new Set());
       }
-      const wasNotViewing = !this.activeConversationViewers.get(conversationId)!.has(userId);
-      this.activeConversationViewers.get(conversationId)!.add(userId);
+      const viewers = this.activeConversationViewers.get(conversationId)!;
+      const wasNotViewing = !viewers.has(userId);
+      viewers.add(userId);
 
-      // Auto-mark all unread messages as read (only if user wasn't already viewing)
+      // Auto-mark unread as read on first join
       if (wasNotViewing) {
         const markedMessages = await messageService.markConversationAsRead(conversationId, userId);
 
         if (markedMessages.length > 0) {
-          const participants = conversation.participants || [];
-          const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
-
-          // Get unread counts ONCE for all participants
-          const unreadCounts = await messageService.getUnreadCountsForConversation(
+          const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
+          const event = await createStatusEvent(
             conversationId,
-            participantIds
+            markedMessages,
+            userId,
+            ReadStatus.READ,
+            participantIds,
+            messageService
           );
 
-          // Create single unified event with all marked messages + updated unread counts
-          const readAt = new Date().toISOString();
-          const unifiedEvent: UnifiedStatusUpdateEvent = {
-            conversationId,
-            updates: markedMessages.map((messageId) => ({
-              messageId,
-              userId,
-              status: ReadStatus.READ,
-              readAt,
-            })),
-            conversationUpdates: participantIds.map((id) => ({
-              userId: id,
-              unreadCount: unreadCounts.get(id) || 0,
-            })),
-          };
-
-          // Single consolidated event to entire conversation
-          this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
+          this.io.to(`conversation:${conversationId}`).emit('status:unified', event);
         }
       }
 
-      // Broadcast that user is viewing conversation (for presence awareness)
-      socket.to(`conversation:${conversationId}`).emit('presence:joined', {
-        conversationId,
-        userId,
-      });
+      socket.to(`conversation:${conversationId}`).emit('presence:joined', { conversationId, userId });
     } catch (error) {
-      const message = error instanceof AppError ? error.message : 'Failed to join conversation';
       socket.emit('error', {
         event: 'conversation:join',
-        message,
+        message: error instanceof AppError ? error.message : 'Failed to join conversation',
       });
     }
   }
@@ -539,43 +368,23 @@ export class SocketManager {
   ): Promise<void> {
     try {
       const { conversationId } = data;
-
       socket.leave(`conversation:${conversationId}`);
 
-      // Remove from socket tracking
       const socketRooms = this.socketConversations.get(socket.id);
       socketRooms?.delete(conversationId);
 
-      // Check if user has any other sockets viewing this conversation
+      // Check if other sockets viewing this conversation
       const userSockets = this.userSessions.get(userId);
-      let hasOtherSocketInConversation = false;
-      if (userSockets) {
-        for (const socketId of userSockets) {
-          if (
-            socketId !== socket.id &&
-            this.socketConversations.get(socketId)?.has(conversationId)
-          ) {
-            hasOtherSocketInConversation = true;
-            break;
-          }
-        }
-      }
+      const hasOtherSocket = userSockets && Array.from(userSockets).some(sid =>
+        sid !== socket.id && this.socketConversations.get(sid)?.has(conversationId)
+      );
 
-      // Only remove from active viewers if no other socket is viewing
-      if (!hasOtherSocketInConversation) {
+      if (!hasOtherSocket) {
         const viewers = this.activeConversationViewers.get(conversationId);
-        if (viewers) {
-          viewers.delete(userId);
-          if (viewers.size === 0) {
-            this.activeConversationViewers.delete(conversationId);
-          }
+        if (viewers?.delete(userId) && viewers.size === 0) {
+          this.activeConversationViewers.delete(conversationId);
         }
-
-        // Broadcast presence leave event
-        socket.to(`conversation:${conversationId}`).emit('presence:left', {
-          conversationId,
-          userId,
-        });
+        socket.to(`conversation:${conversationId}`).emit('presence:left', { conversationId, userId });
       }
     } catch (error) {
       socket.emit('error', {
@@ -586,185 +395,112 @@ export class SocketManager {
   }
 
   /**
-   * Handle presence ping from client - keeps online status fresh and real-time
-   * Called every 30 seconds by the frontend to prevent staleness
+   * Handle presence ping
    */
   private async handlePresencePing(userId: number): Promise<void> {
     try {
-      // Broadcast fresh online status to all conversations where user is participant
       await this.broadcastUserStatus(userId, 'online');
     } catch (error) {
-      console.error('[SocketManager] Failed to handle presence ping:', error);
-      // Don't emit error to client - presence ping is non-critical
+      console.error('Presence ping failed:', error);
     }
   }
 
   /**
-   * Handle user disconnect
+   * Handle disconnect - cleanup user and socket tracking
    */
   private async handleDisconnect(socket: AuthenticatedSocket, userId: number): Promise<void> {
-    // Get conversations this socket was in
     const socketRooms = this.socketConversations.get(socket.id);
-
-    // Clean up active viewers for each conversation
+    
     if (socketRooms) {
       const userSockets = this.userSessions.get(userId);
       for (const conversationId of socketRooms) {
-        // Check if user has other sockets in this conversation
-        let hasOtherSocketInConversation = false;
-        if (userSockets) {
-          for (const socketId of userSockets) {
-            if (
-              socketId !== socket.id &&
-              this.socketConversations.get(socketId)?.has(conversationId)
-            ) {
-              hasOtherSocketInConversation = true;
-              break;
-            }
-          }
-        }
+        const hasOtherSocket = userSockets && Array.from(userSockets).some(sid =>
+          sid !== socket.id && this.socketConversations.get(sid)?.has(conversationId)
+        );
 
-        // Only remove from active viewers if no other socket is viewing
-        if (!hasOtherSocketInConversation) {
+        if (!hasOtherSocket) {
           const viewers = this.activeConversationViewers.get(conversationId);
-          if (viewers) {
-            viewers.delete(userId);
-            if (viewers.size === 0) {
-              this.activeConversationViewers.delete(conversationId);
-            }
+          if (viewers?.delete(userId) && viewers.size === 0) {
+            this.activeConversationViewers.delete(conversationId);
           }
         }
       }
-
-      // Clean up socket conversation tracking
       this.socketConversations.delete(socket.id);
     }
 
-    // Clean up user session
     const userSockets = this.userSessions.get(userId);
     if (userSockets) {
       userSockets.delete(socket.id);
       if (userSockets.size === 0) {
         this.userSessions.delete(userId);
-        // Update lastSeen before broadcasting offline status
         await userService.updateLastSeen(userId);
-        this.broadcastUserStatus(userId, 'offline');
+        await this.broadcastUserStatus(userId, 'offline');
       }
     }
   }
 
   /**
-   * Handle user connected - mark pending messages as delivered (BATCHED)
-   * Batches delivery updates by conversation instead of individual events
+   * Mark pending messages as delivered on user connect
    */
   private async handleUserConnected(userId: number): Promise<void> {
     try {
-      // Get all undelivered messages for this user
-      const undeliveredMessages = await messageService.getUndeliveredMessages(userId);
+      const undelivered = await messageService.getUndeliveredMessages(userId);
+      if (!undelivered.length) return;
 
-      if (undeliveredMessages.length === 0) {
-        return;
-      }
+      // Group by conversation
+      const byConversation: Record<number, number[]> = {};
+      undelivered.forEach(msg => {
+        byConversation[msg.conversationId] ??= [];
+        byConversation[msg.conversationId].push(msg.id);
+      });
 
-      // Mark all as delivered in batch
-      const messageIds = undeliveredMessages.map((m) => m.id);
-      await messageService.markAsDelivered(messageIds, userId);
-
-      // Group by conversation and create unified events
-      const conversationGroups = undeliveredMessages.reduce(
-        (acc, msg) => {
-          if (!acc[msg.conversationId]) {
-            acc[msg.conversationId] = [];
-          }
-          acc[msg.conversationId].push(msg.id);
-          return acc;
-        },
-        {} as Record<number, number[]>
+      await batchMarkMessages(
+        undelivered.map(m => m.id),
+        [userId],
+        ReadStatus.DELIVERED,
+        messageService
       );
 
-      // Send unified event per conversation
-      for (const [convIdStr, msgIds] of Object.entries(conversationGroups)) {
+      // Broadcast per conversation
+      for (const [convIdStr, msgIds] of Object.entries(byConversation)) {
         const conversationId = Number(convIdStr);
-
         try {
           const conversation = await conversationService.getConversation(conversationId, userId);
-          const participants = conversation.participants || [];
-          const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+          const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-          // Get unread counts once per conversation
-          const unreadCounts = await messageService.getUnreadCountsForConversation(
+          const event = await createStatusEvent(
             conversationId,
-            participantIds
+            msgIds,
+            userId,
+            ReadStatus.DELIVERED,
+            participantIds,
+            messageService
           );
 
-          const readAt = new Date().toISOString();
-          const unifiedEvent: UnifiedStatusUpdateEvent = {
-            conversationId,
-            updates: msgIds.map((messageId) => ({
-              messageId,
-              userId,
-              status: ReadStatus.DELIVERED,
-              readAt,
-            })),
-            conversationUpdates: participantIds.map((id) => ({
-              userId: id,
-              unreadCount: unreadCounts.get(id) || 0,
-            })),
-          };
-
-          this.io.to(`conversation:${conversationId}`).emit('status:unified', unifiedEvent);
+          this.io.to(`conversation:${conversationId}`).emit('status:unified', event);
         } catch (error) {
-          console.error(`Failed to process delivery for conversation ${conversationId}:`, error);
+          console.error(`Delivery notification failed for conversation ${conversationId}:`, error);
         }
       }
     } catch (error) {
-      console.error('Failed to mark messages as delivered:', error);
+      console.error('User connected delivery failed:', error);
     }
   }
 
   /**
-   * Throttle an event to prevent firing too frequently
-   * Used for high-frequency events like typing, status updates
-   * @param key Unique key for throttling (conversationId:userId)
-   * @param delayMs Minimum delay between events in milliseconds
-   * @returns true if event should fire, false if throttled
-   */
-  private shouldThrottle(key: string, delayMs: number, timeMap: Map<string, number>): boolean {
-    const now = Date.now();
-    const lastTime = timeMap.get(key) || 0;
-    const elapsed = now - lastTime;
-
-    if (elapsed >= delayMs) {
-      timeMap.set(key, now);
-      return false; // Should NOT throttle - allow event
-    }
-    return true; // Should throttle - block event
-  }
-
-  /**
-   * Handle typing start
+   * Handle typing start with throttle
    */
   private handleTypingStart(socket: AuthenticatedSocket, userId: number, data: any): void {
-    try {
-      const { conversationId } = data;
-      if (!conversationId || typeof conversationId !== 'number') {
-        return;
-      }
+    const { conversationId } = data;
+    if (!conversationId) return;
 
-      // Throttle typing events - only allow once per 1000ms per user per conversation
-      const throttleKey = `${conversationId}:${userId}`;
-      if (this.shouldThrottle(throttleKey, 1000, this.lastTypingEventTime)) {
-        return; // Throttled - don't emit
-      }
+    const throttleKey = `${conversationId}:${userId}`;
+    const now = Date.now();
+    const lastTime = this.lastTypingEventTime.get(throttleKey) || 0;
 
-      // Only emit to others in the room (not to sender)
-      socket.to(`conversation:${conversationId}`).emit('typing:start', {
-        conversationId,
-        userId,
-        isTyping: true,
-      });
-    } catch (error) {
-      console.error('Failed to handle typing start:', error);
+    if (now - lastTime >= 1000) {
+      this.lastTypingEventTime.set(throttleKey, now);
+      socket.to(`conversation:${conversationId}`).emit('typing:start', { conversationId, userId });
     }
   }
 
@@ -772,33 +508,17 @@ export class SocketManager {
    * Handle typing stop
    */
   private handleTypingStop(socket: AuthenticatedSocket, userId: number, data: any): void {
-    try {
-      const { conversationId } = data;
-      if (!conversationId || typeof conversationId !== 'number') {
-        return;
-      }
-
-      // Only emit to others in the room (not to sender)
-      socket.to(`conversation:${conversationId}`).emit('typing:stop', {
-        conversationId,
-        userId,
-        isTyping: false,
-      });
-    } catch (error) {
-      console.error('Failed to handle typing stop:', error);
-    }
+    const { conversationId } = data;
+    if (!conversationId) return;
+    socket.to(`conversation:${conversationId}`).emit('typing:stop', { conversationId, userId });
   }
 
   /**
-   * Broadcast user online/offline status - OPTIMIZED
-   * Only sends to users in shared conversations with this user
+   * Broadcast user online/offline status
    */
   private async broadcastUserStatus(userId: number, status: 'online' | 'offline'): Promise<void> {
     try {
-      // Update user status in database
       await userService.updateUserStatus(userId, status);
-
-      // Get current user data to include lastSeen
       const user = await userService.getUserById(userId);
       const lastSeen = user?.lastSeen || new Date();
 
@@ -808,16 +528,14 @@ export class SocketManager {
         lastSeen: lastSeen.toISOString(),
       };
 
-      // Get all conversations for this user to find who cares about their status
       const userConversations = await conversationService.getConversations(userId);
       const allConversationIds = userConversations.data.map((c: any) => c.id);
 
-      // Only broadcast to conversations where this user is a participant
       for (const conversationId of allConversationIds) {
         this.io.to(`conversation:${conversationId}`).emit('user:status', payload);
       }
     } catch (error) {
-      console.error('[SocketManager] Failed to broadcast user status:', error);
+      console.error('Broadcast status failed:', error);
     }
   }
 
@@ -841,8 +559,7 @@ export class SocketManager {
   }
 
   /**
-   * Broadcast unified message event to conversation
-   * Called by REST API after message is created
+   * Broadcast unified message event (called by REST API)
    */
   async broadcastUnifiedMessage(
     conversationId: number,
@@ -850,75 +567,40 @@ export class SocketManager {
     senderId: number
   ): Promise<void> {
     try {
-      // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, senderId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-      // Mark messages as delivered/read for online users based on their state
-      const activeViewers = this.activeConversationViewers.get(conversationId);
-      const messagesToMarkDelivered: number[] = [];
-      const messagesToMarkRead: number[] = [];
+      // Batch mark by online status
+      const activeViewers = this.activeConversationViewers.get(conversationId) || new Set();
+      const readRecipients = participantIds.filter(id => id !== senderId && activeViewers.has(id));
+      const deliveredRecipients = participantIds.filter(id => id !== senderId && 
+        !activeViewers.has(id) && this.userSessions.has(id));
 
-      for (const participant of participants) {
-        if (participant.id && participant.id !== senderId) {
-          const isOnline = this.userSessions.has(participant.id);
-          const isActiveViewer = activeViewers?.has(participant.id);
-
-          if (isActiveViewer) {
-            messagesToMarkRead.push(participant.id);
-          } else if (isOnline) {
-            messagesToMarkDelivered.push(participant.id);
-          }
-        }
+      if (readRecipients.length) {
+        await batchMarkMessages([messageId], readRecipients, ReadStatus.READ, messageService);
+      }
+      if (deliveredRecipients.length) {
+        await batchMarkMessages([messageId], deliveredRecipients, ReadStatus.DELIVERED, messageService);
       }
 
-      // Batch mark as read and delivered
-      if (messagesToMarkRead.length > 0) {
-        for (const recipientId of messagesToMarkRead) {
-          await messageService.markAsRead([messageId], recipientId);
-        }
-      }
-      if (messagesToMarkDelivered.length > 0) {
-        for (const recipientId of messagesToMarkDelivered) {
-          await messageService.markAsDelivered([messageId], recipientId);
-        }
-      }
-
-      // Reload message with final state
       const reloadedMessage = await messageService.getMessageWithRelations(messageId);
-      const messageWithReads = messageToDTO(reloadedMessage);
-
-      // Get unread counts for all participants (SINGLE QUERY instead of N+1)
-      const unreadCounts = await messageService.getUnreadCountsForConversation(
+      const event = await createMessageEvent(
         conversationId,
-        participantIds
+        messageToDTO(reloadedMessage),
+        participantIds,
+        messageService
       );
 
-      // Create unified event with message + per-recipient unread counts
-      const unifiedEvent: UnifiedMessageEvent = {
-        conversationId,
-        message: messageWithReads,
-        conversationUpdates: participantIds.map((id) => ({
-          userId: id,
-          unreadCount: unreadCounts.get(id) || 0,
-        })),
-      };
-
-      // Send single consolidated event to entire conversation
-      this.io.to(`conversation:${conversationId}`).emit('message:unified', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('message:unified', unifiedEvent);
+      this.io.to(`conversation:${conversationId}`).emit('message:unified', event);
+      this.io.to('conversations').emit('message:unified', event);
     } catch (error) {
-      console.error('[SocketManager] Failed to broadcast unified message:', error);
+      console.error('Broadcast message failed:', error);
       throw error;
     }
   }
 
   /**
-   * Broadcast unified message deletion event to conversation
-   * Called by REST API after message is deleted
+   * Broadcast unified message deletion event (called by REST API)
    */
   async broadcastUnifiedMessageDeletion(
     conversationId: number,
@@ -926,34 +608,27 @@ export class SocketManager {
     deleterId: number
   ): Promise<void> {
     try {
-      // Get conversation with participants
       const conversation = await conversationService.getConversation(conversationId, deleterId);
-      const participants = conversation.participants || [];
-      const participantIds = participants.map((p) => p.id).filter(Boolean) as number[];
+      const participantIds = conversation.participants?.map(p => p.id).filter(Boolean) as number[];
 
-      // Get unread counts for all participants
       const unreadCounts = await messageService.getUnreadCountsForConversation(
         conversationId,
         participantIds
       );
 
-      // Create unified deletion event
-      const unifiedEvent: UnifiedMessageDeletionEvent = {
+      const event: UnifiedMessageDeletionEvent = {
         conversationId,
         deletedMessageIds: [messageId],
-        conversationUpdates: participantIds.map((id) => ({
+        conversationUpdates: participantIds.map(id => ({
           userId: id,
           unreadCount: unreadCounts.get(id) || 0,
         })),
       };
 
-      // Send single consolidated event to entire conversation
-      this.io.to(`conversation:${conversationId}`).emit('message:deleted', unifiedEvent);
-
-      // Also broadcast to global conversations room for conversation list updates
-      this.io.to('conversations').emit('message:deleted', unifiedEvent);
+      this.io.to(`conversation:${conversationId}`).emit('message:deleted', event);
+      this.io.to('conversations').emit('message:deleted', event);
     } catch (error) {
-      console.error('[SocketManager] Failed to broadcast unified message deletion:', error);
+      console.error('Broadcast deletion failed:', error);
       throw error;
     }
   }

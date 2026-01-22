@@ -2,7 +2,8 @@ import { Text, View } from 'react-native';
 import React from 'react';
 import { useTheme } from '@/contexts';
 import type { Conversation } from '@/models';
-import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
+import { formatTimeAgo, shouldShowOnlineIndicator, formatTimeShort } from '@/lib/time-utils';
+
 import { UserAvatar } from '../user';
 
 interface ConversationItemProps {
@@ -11,11 +12,6 @@ interface ConversationItemProps {
   otherUserLastSeen?: string;
 }
 
-function formatTime(date?: Date | string): string {
-  if (!date) return '';
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
-}
 
 function ConversationItemComponent({
   conversation,
@@ -81,8 +77,8 @@ function ConversationItemComponent({
           <View className="absolute bottom-0 right-0 items-center justify-center">
             {statusText === 'Online' ? (
               <View
-                style={{ backgroundColor: colors.status.online }}
-                className="h-4 w-4 rounded-full border-2 border-white"
+                style={{ backgroundColor: colors.status.online, borderColor: colors.bg.primary }}
+                className="h-4 w-4 rounded-full border-2"
               />
             ) : (
               <View
@@ -110,7 +106,7 @@ function ConversationItemComponent({
           <Text
             style={{ color: hasUnread ? colors.text.primary : colors.text.secondary }}
             className={`flex-shrink-0 text-xs ${hasUnread ? 'font-semibold' : ''}`}>
-            {formatTime(lastMessage?.createdAt)}
+            {formatTimeShort(lastMessage?.createdAt)}
           </Text>
         </View>
 

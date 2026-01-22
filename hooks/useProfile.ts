@@ -36,6 +36,7 @@ interface UpdateProfileData {
 
 /**
  * Hook to update current user profile
+ * Socket broadcasts user:status updates in real-time
  */
 export function useUpdateProfile() {
   const queryClient = useQueryClient();
@@ -46,17 +47,9 @@ export function useUpdateProfile() {
       return authService.updateProfile(data);
     },
     onSuccess: (updatedUser) => {
-      // Update store
+      // Update store and cache immediately (socket will broadcast confirmation)
       setUser(updatedUser);
-
-      // Update cache with new data
       queryClient.setQueryData(PROFILE_QUERY_KEYS.current(), updatedUser);
-
-      // Invalidate to ensure freshness and refetch if needed
-      queryClient.invalidateQueries({
-        queryKey: PROFILE_QUERY_KEYS.all,
-        refetchType: 'active',
-      });
     },
     onError: (error) => {
       console.error('useUpdateProfile: Error occurred:', error);

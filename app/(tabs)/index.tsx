@@ -1,25 +1,26 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback } from 'react';
 import {
   View,
-  Text,
   TouchableOpacity,
   ActivityIndicator,
-  RefreshControl,
   FlatList,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
+import { Image } from 'expo-image';
+import { messageService, conversationService } from '@/services';
+import { messageQueryKeys, conversationQueryKeys } from '@/lib/query-keys';
 import { Ionicons } from '@expo/vector-icons';
 import { useInfiniteConversations, useProfile } from '@/hooks';
 import { useTheme } from '@/contexts';
-import { ErrorState, Header, SocketConnectionStatus } from '@/components/common';
+import { ErrorState, Header, SocketConnectionStatus, EmptyState } from '@/components/common';
 import { ConversationItem } from '@/components/chat';
 import type { Conversation } from '@/models';
 import { useUserStore } from '@/stores';
+import { ScreenLayout } from '@/components/layouts/ScreenLayout';
 
 export default function ChatsScreen() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const { data: user } = useProfile();
   const {
     data: conversationsData,
@@ -30,19 +31,55 @@ export default function ChatsScreen() {
     fetchNextPage,
     isFetchingNextPage,
   } = useInfiniteConversations();
-  
-  // Flatten all pages of conversations and deduplicate by ID
-  const conversations = React.useMemo(() => {
+  // Prefetch helpers to warm up chat screen data for smoother navigation
+  const queryClient = useQueryClient();
+  const prefetchConversation = useCallback(async (conversation: Conversation) => {
+    const id = conversation.id;
+
+    // Seed the conversation detail cache so header can render immediately
+    queryClient.setQueryData(conversationQueryKeys.detail(id), conversation);
+
+    // Prefetch conversation detail from server (refresh in background)
+    queryClient.prefetchQuery({
+      queryKey: conversationQueryKeys.detail(id),
+      queryFn: () => conversationService.getConversation(id),
+    }).catch(() => {});
+
+    // Prefetch initial page of messages for the conversation
+    queryClient.prefetchInfiniteQuery({
+      queryKey: messageQueryKeys.byConversation(id),
+      queryFn: async ({ pageParam }: { pageParam?: string | number } = {}) => {
+        const res = await messageService.getMessages(id, { limit: 20, before: pageParam ? Number(pageParam) : undefined });
+        return { ...res, data: res.data.map((m) => ({ ...m, createdAtMs: Date.parse(m.createdAt) })) };
+      },
+      initialPageParam: undefined,
+    }).catch(() => {});
+
+    // Prefetch avatar image (if available)
+    const otherParticipant = conversation.participants?.find((p) => p.id !== (conversationsData?.pages?.[0]?.data?.[0]?.participants?.[0]?.id ?? 0));
+    const avatarUrl = conversation.participants?.find((p) => p.id !== undefined)?.avatarUrl || undefined;
+    if (avatarUrl) {
+      Image.prefetch(avatarUrl).catch(() => {});
+    }
+  }, [queryClient, conversationsData]);  
+  const ITEM_HEIGHT = 80;
+
+  // Combine pagination pages, dedupe, and filter out conversations without messages
+  const conversationsList = React.useMemo(() => {
     if (!conversationsData?.pages) return [];
     const allConversations = conversationsData.pages.flatMap((page) => page.data);
-    
-    // Deduplicate: keep first occurrence of each conversation ID
+
     const seen = new Set<number>();
-    return allConversations.filter((conv) => {
-      if (seen.has(conv.id)) return false;
+    const deduped: Conversation[] = [];
+
+    for (const conv of allConversations) {
+      if (!conv.lastMessage) continue; // Skip empty conversations
+      if (seen.has(conv.id)) continue;
       seen.add(conv.id);
-      return true;
-    });
+      deduped.push(conv);
+    }
+
+    return deduped;
   }, [conversationsData?.pages]);
 
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -50,20 +87,14 @@ export default function ChatsScreen() {
   // Get all user presence data from store for real-time updates
   const userPresence = useUserStore((state) => state.userPresence);
 
-  const handleRefresh = async () => {
+  const handleRefresh = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
       await refetch();
     } finally {
       setIsRefreshing(false);
     }
-  };
-
-  // Filter out empty conversations (no messages sent yet)
-  const filteredConversations = React.useMemo(
-    () => conversations.filter((conv) => conv.lastMessage !== null && conv.lastMessage !== undefined),
-    [conversations]
-  );
+  }, [refetch]);
 
   // Refetch conversations when screen comes into focus
   useFocusEffect(
@@ -90,7 +121,10 @@ export default function ChatsScreen() {
         : undefined;
 
       return (
-        <TouchableOpacity activeOpacity={0.7} onPress={() => handleConversationPress(item.id)}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPressIn={() => prefetchConversation(item)}
+          onPress={() => handleConversationPress(item.id)}>
           <ConversationItem
             conversation={item}
             currentUserId={user?.id}
@@ -104,96 +138,49 @@ export default function ChatsScreen() {
 
   const keyExtractor = useCallback((item: Conversation) => `conv-${item.id}`, []);
 
-  const ItemSeparator = () => (
+  const ItemSeparator = React.useCallback(() => (
     <View style={{ backgroundColor: colors.border.primary }} className="h-px" />
-  );
+  ), [colors.border.primary]);
 
-  if (isLoading && filteredConversations.length === 0) {
+  // End reached handler for cursor pagination
+  const handleEndReached = React.useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const ListFooterComponent = React.useMemo(() => {
+    if (!isFetchingNextPage) return null;
     return (
-      <View
-        style={{ flex: 1, backgroundColor: colors.bg.primary }}
-        className="items-center justify-center">
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View className="py-4">
+        <ActivityIndicator size="small" color={colors.primary} />
       </View>
     );
-  }
+  }, [isFetchingNextPage, colors.primary]);
 
-  if (error && filteredConversations.length === 0) {
+  if (isLoading && conversationsList.length === 0) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: colors.bg.primary,
-        }}>
-        <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-          <Header title="Chats" showBackButton={false} />
-          <SocketConnectionStatus />
-          <ErrorState
-            error={error as Error}
-            onRetry={() => refetch()}
-            message="Failed to load conversations. Please check your connection."
-          />
+      <ScreenLayout>
+        <Header title="Chats" showBackButton={false} />
+        <SocketConnectionStatus />
+        <View style={{ flex: 1 }} className="items-center justify-center">
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      </View>
-    );
-  }
-
-  if (filteredConversations.length === 0) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: colors.bg.primary,
-        }}>
-        <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-          <Header title="Chats" showBackButton={false} />
-          <SocketConnectionStatus />
-          <View className="flex-1 items-center justify-center px-6">
-            <View className="items-center">
-              <View
-                style={{ backgroundColor: colors.bg.secondary }}
-                className="mb-6 h-20 w-20 items-center justify-center rounded-full">
-                <Ionicons
-                  name="chatbubble-ellipses-outline"
-                  size={40}
-                  color={colors.text.tertiary}
-                />
-              </View>
-              <Text
-                style={{ color: colors.text.primary }}
-                className="text-xl font-semibold text-center">
-                No conversations yet
-              </Text>
-              <Text
-                style={{ color: colors.text.secondary }}
-                className="mt-2 text-center text-base leading-5">
-                Start chatting with others by tapping the button below.
-              </Text>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => router.push('/select-user')}
-            style={{
-              backgroundColor: colors.primary,
-              marginBottom: insets.bottom,
-            }}
-            className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full shadow-lg">
-            <Ionicons name="create-outline" size={28} color={colors.text.inverted} />
-          </TouchableOpacity>
-        </View>
-      </View>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => router.push('/select-user')}
+          style={{
+            backgroundColor: colors.primary,
+          }}
+          className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full shadow-lg">
+          <Ionicons name="create-outline" size={28} color={colors.text.inverted} />
+        </TouchableOpacity>
+      </ScreenLayout>
     );
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.bg.primary,
-        paddingBottom: insets.bottom,
-      }}>
+    <ScreenLayout edges={['top', 'right', 'left']}>
       <Header title="Chats" showBackButton={false} />
       <SocketConnectionStatus />
 
@@ -209,26 +196,32 @@ export default function ChatsScreen() {
       )}
 
       <FlatList
-        data={filteredConversations}
+        data={conversationsList}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ItemSeparatorComponent={ItemSeparator}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.primary}
+        refreshing={isRefreshing}
+        onRefresh={handleRefresh}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={ListFooterComponent}
+        ListEmptyComponent={() => (
+          <EmptyState
+            title="No conversations yet"
+            description="Start chatting with others by tapping the button below."
           />
-        }
-        maxToRenderPerBatch={10}
+        )}
+        maxToRenderPerBatch={8}
         updateCellsBatchingPeriod={50}
-        initialNumToRender={15}
+        initialNumToRender={12}
+        windowSize={5}
         removeClippedSubviews={true}
         getItemLayout={(data, index) => ({
-          length: 80,
-          offset: 80 * index,
+          length: ITEM_HEIGHT,
+          offset: ITEM_HEIGHT * index,
           index,
         })}
+        contentContainerStyle={{ paddingBottom: 80 }}
       />
 
       <TouchableOpacity
@@ -236,11 +229,10 @@ export default function ChatsScreen() {
         onPress={() => router.push('/select-user')}
         style={{
           backgroundColor: colors.primary,
-          marginBottom: insets.bottom,
         }}
         className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full shadow-lg">
         <Ionicons name="create-outline" size={28} color={colors.text.inverted} />
       </TouchableOpacity>
-    </View>
-  );
+    </ScreenLayout>
+    );
 }

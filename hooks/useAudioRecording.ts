@@ -1,15 +1,18 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAudioRecorder, RecordingPresets } from 'expo-audio';
 import { audioService } from '@/lib';
+import { useAudioStore } from '@/stores';
 
 /**
  * useAudioRecording: Hook for managing audio recording
  * Integrates expo-audio's useAudioRecorder with the audio service
  */
 export function useAudioRecording() {
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording, setIsRecordingLocal] = useState(false);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  const setIsRecording = useAudioStore((s) => s.setIsRecording);
 
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -73,18 +76,21 @@ export function useAudioRecording() {
       }
 
       await audioService.startRecording();
-      setIsRecording(true);
+      setIsRecordingLocal(true);
+      setIsRecording(true); // sync global indicator
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Recording failed';
       console.error('Recording start error:', message);
       setError(message);
+      setIsRecordingLocal(false);
       setIsRecording(false);
     }
-  }, [recorder]);
+  }, [recorder, setIsRecording]);
 
   const stopRecording = useCallback(async () => {
     try {
-      setIsRecording(false);
+      setIsRecordingLocal(false);
+      setIsRecording(false); // sync global indicator
       const result = await audioService.stopRecording();
       return result;
     } catch (err) {
@@ -92,18 +98,19 @@ export function useAudioRecording() {
       setError(message);
       throw err;
     }
-  }, []);
+  }, [setIsRecording]);
 
   const cancelRecording = useCallback(async () => {
     try {
-      setIsRecording(false);
+      setIsRecordingLocal(false);
+      setIsRecording(false); // sync global indicator
       setDuration(0);
       await audioService.cancelRecording();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Cancel failed';
       setError(message);
     }
-  }, []);
+  }, [setIsRecording]);
 
   return {
     isRecording,

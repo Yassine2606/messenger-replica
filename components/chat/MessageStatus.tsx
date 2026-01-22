@@ -1,4 +1,5 @@
 import { Text } from 'react-native';
+import React from 'react';
 import type { MessageRead } from '@/models';
 
 interface MessageStatusProps {
@@ -26,9 +27,17 @@ function getStatusDisplay(status: 'sent' | 'delivered' | 'read') {
   }
 }
 
-export function MessageStatus({ reads, currentUserId }: MessageStatusProps) {
+function MessageStatusComponent({ reads, currentUserId }: MessageStatusProps) {
   const status = getStatus(reads, currentUserId);
   const display = getStatusDisplay(status);
 
   return <Text className={`text-xs ${display.color}`}>{display.text}</Text>;
 }
+
+export const MessageStatus = React.memo(MessageStatusComponent, (prev, next) => {
+  return (
+    prev.currentUserId === next.currentUserId &&
+    (prev.reads?.length || 0) === (next.reads?.length || 0)
+  );
+});
+MessageStatus.displayName = 'MessageStatus';

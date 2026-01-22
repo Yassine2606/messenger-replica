@@ -1,15 +1,13 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import { Link, router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useTheme } from '@/contexts';
 import { Input } from '@/components/common';
+import { FormScreenLayout } from '@/components/layouts';
 import { useLogin } from '@/hooks';
 
 export default function LoginScreen() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const loginMutation = useLogin();
 
   const [email, setEmail] = useState('');
@@ -59,16 +57,15 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top }}>
-      <KeyboardAwareScrollView
+    <FormScreenLayout>
+      <ScrollView
         contentContainerStyle={{
           flexGrow: 1,
           justifyContent: 'center',
           paddingHorizontal: 24,
-          paddingBottom: Math.max(insets.bottom, 16),
+          paddingBottom: 16,
         }}
-        keyboardShouldPersistTaps="handled"
-        bottomOffset={8}>
+        keyboardShouldPersistTaps="handled">
         <View className="mb-8">
           <Text style={{ color: colors.text.primary }} className="mb-2 text-3xl font-bold">
             Welcome Back
@@ -128,7 +125,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </Link>
         </View>
-      </KeyboardAwareScrollView>
-    </View>
+      </ScrollView>
+    </FormScreenLayout>
   );
 }

@@ -1,6 +1,5 @@
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfile, useLogout, useUpdateProfile } from '@/hooks';
@@ -8,10 +7,10 @@ import { useTheme } from '@/contexts';
 import { CustomModal, FormField, Button } from '@/components/common';
 import { ProfileCard, UserAvatar } from '@/components/user';
 import { AvatarUploader } from '@/components/media';
+import { ScreenLayout } from '@/components/layouts';
 
 export default function ProfileScreen() {
   const { colors, toggleTheme, theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const { data: user, isLoading } = useProfile();
   const logoutMutation = useLogout();
   const updateProfileMutation = useUpdateProfile();
@@ -71,23 +70,17 @@ export default function ProfileScreen() {
 
   if (isLoading) {
     return (
-      <View
-        style={{ flex: 1, backgroundColor: colors.bg.primary }}
-        className="items-center justify-center">
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+       <ScreenLayout>
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </ScreenLayout>
     );
   }
 
   if (!user) {
     return (
-      <View
-        style={{
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
-          backgroundColor: colors.bg.primary,
-        }}
-        className="flex-1 bg-white">
+      <ScreenLayout>
         <View className="flex-1 items-center justify-center px-6">
           <Text style={{ color: colors.text.primary }} className="text-xl font-semibold">
             No user data
@@ -105,20 +98,13 @@ export default function ProfileScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScreenLayout>
     );
   }
 
   return (
-    <>
-      <ScrollView
-        style={{
-          flex: 1,
-          backgroundColor: colors.bg.primary,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom + 20,
-        }}
-        contentContainerStyle={{ flexGrow: 1 }}
+    <ScreenLayout>
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}
         scrollEnabled={true}
         showsVerticalScrollIndicator={false}>
         <View className="px-6 py-8">
@@ -243,6 +229,6 @@ export default function ProfileScreen() {
           </View>
         </View>
       </CustomModal>
-    </>
+    </ScreenLayout>
   );
 }

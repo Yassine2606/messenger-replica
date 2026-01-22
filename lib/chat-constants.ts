@@ -43,6 +43,8 @@ export const MESSAGE = {
   BORDER_RADIUS_TIGHT: 4,
   // Time threshold for grouping messages (in milliseconds)
   GROUPING_TIME_THRESHOLD: 300000, // 5 minutes
+  // Threshold for inserting a time separator / breaking clusters (e.g., long inactivity)
+  SEPARATOR_TIME_THRESHOLD: 3 * 60 * 60 * 1000, // 3 hours
 } as const;
 
 // Typing Indicator

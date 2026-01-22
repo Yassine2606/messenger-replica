@@ -6,21 +6,24 @@ import { useUserPresence } from '@/hooks';
 import { useTheme } from '@/contexts';
 import { formatTimeAgo, shouldShowOnlineIndicator } from '@/lib/time-utils';
 import { UserAvatar } from '../user';
+import React from 'react';
 
 interface ChatHeaderProps {
   title: string;
   userId?: number;
   lastSeen?: string;
   onBackPress?: () => void;
+  onLeavePress?: () => void;
   userName?: string;
   userAvatarUrl?: string;
 }
 
-export function ChatHeader({
+function ChatHeaderComponent({
   title,
   userId,
   lastSeen,
   onBackPress,
+  onLeavePress,
   userName,
   userAvatarUrl,
 }: ChatHeaderProps) {
@@ -29,13 +32,13 @@ export function ChatHeader({
   // Always call the hook, it handles the conditional logic internally
   const realtimeLastSeen = useUserPresence(userId, lastSeen);
 
-  const handleBack = () => {
+  const handleBack = React.useCallback(() => {
     if (onBackPress) {
       onBackPress();
     } else {
       router.back();
     }
-  };
+  }, [onBackPress]);
 
   const statusText = realtimeLastSeen ? formatTimeAgo(realtimeLastSeen) : null;
   const shouldShow = realtimeLastSeen ? shouldShowOnlineIndicator(realtimeLastSeen) : false;
@@ -45,7 +48,6 @@ export function ChatHeader({
       style={{
         borderBottomColor: colors.border.primary,
         backgroundColor: colors.bg.primary,
-        paddingTop: insets.top,
       }}
       className="border-b">
       <View className="flex-row items-center px-2 py-3">
@@ -83,7 +85,30 @@ export function ChatHeader({
             </View>
           )}
         </View>
+
+        {/* Leave Button */}
+        {onLeavePress && (
+          <TouchableOpacity
+            onPress={onLeavePress}
+            className="ml-3 h-10 w-10 items-center justify-center"
+            activeOpacity={0.7}>
+            <Ionicons name="exit" size={24} color={colors.status.offline} />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
 }
+
+export const ChatHeader = React.memo(ChatHeaderComponent, (prev, next) => {
+  return (
+    prev.title === next.title &&
+    prev.userId === next.userId &&
+    prev.lastSeen === next.lastSeen &&
+    prev.userAvatarUrl === next.userAvatarUrl &&
+    prev.userName === next.userName &&
+    prev.onLeavePress === next.onLeavePress &&
+    prev.onBackPress === next.onBackPress
+  );
+});
+ChatHeader.displayName = 'ChatHeader';

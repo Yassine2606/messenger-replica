@@ -1,6 +1,5 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts';
 
@@ -12,7 +11,6 @@ interface HeaderProps {
 }
 
 export function Header({ title, showBackButton = true, onBackPress, rightElement }: HeaderProps) {
-  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
   const handleBack = () => {
@@ -28,7 +26,6 @@ export function Header({ title, showBackButton = true, onBackPress, rightElement
       style={{
         borderBottomColor: colors.border.primary,
         backgroundColor: colors.bg.primary,
-        paddingTop: insets.top,
       }}
       className="border-b">
       <View className="flex-row items-center justify-between px-4 py-3">

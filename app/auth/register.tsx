@@ -1,15 +1,13 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import { Link, router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useTheme } from '@/contexts';
 import { Input } from '@/components/common';
+import { FormScreenLayout } from '@/components/layouts';
 import { useRegister } from '@/hooks';
 
 export default function RegisterScreen() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const registerMutation = useRegister();
 
   const [name, setName] = useState('');
@@ -84,16 +82,15 @@ export default function RegisterScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top }}>
-      <KeyboardAwareScrollView
+    <FormScreenLayout>
+      <ScrollView
         contentContainerStyle={{
           flexGrow: 1,
           justifyContent: 'center',
           paddingHorizontal: 24,
-          paddingBottom: Math.max(insets.bottom, 16),
+          paddingBottom: 16,
         }}
-        keyboardShouldPersistTaps="handled"
-        bottomOffset={8}>
+        keyboardShouldPersistTaps="handled">
         <View className="mb-8">
           <Text style={{ color: colors.text.primary }} className="mb-2 text-3xl font-bold">
             Create Account
@@ -174,7 +171,7 @@ export default function RegisterScreen() {
             </TouchableOpacity>
           </Link>
         </View>
-      </KeyboardAwareScrollView>
-    </View>
+      </ScrollView>
+    </FormScreenLayout>
   );
 }

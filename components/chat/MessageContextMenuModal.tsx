@@ -19,7 +19,7 @@ interface MessageContextMenuModalProps {
   isDeleting?: boolean;
 }
 
-export function MessageContextMenuModal({
+function MessageContextMenuModalComponent({
   visible,
   message,
   currentUserId,
@@ -187,3 +187,15 @@ export function MessageContextMenuModal({
     </Modal>
   );
 }
+
+export const MessageContextMenuModal = React.memo(
+  MessageContextMenuModalComponent,
+  (prev, next) =>
+    prev.visible === next.visible &&
+    prev.message?.id === next.message?.id &&
+    prev.currentUserId === next.currentUserId &&
+    prev.isDeleting === next.isDeleting &&
+    prev.onClose === next.onClose &&
+    prev.onDelete === next.onDelete
+);
+MessageContextMenuModal.displayName = 'MessageContextMenuModal';

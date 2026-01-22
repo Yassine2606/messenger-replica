@@ -257,6 +257,25 @@ export class ConversationService {
   }
 
   /**
+   * Remove user from conversation
+   */
+  async leaveConversation(conversationId: number, userId: number): Promise<void> {
+    // Verify user is participant
+    const participant = await ConversationParticipant.findOne({
+      where: { conversationId, userId },
+    });
+
+    if (!participant) {
+      throw new AppError(404, 'Not a participant of this conversation');
+    }
+
+    // Remove user from conversation
+    await ConversationParticipant.destroy({
+      where: { conversationId, userId },
+    });
+  }
+
+  /**
    * Update conversation's lastMessageId (called after message sent)
    */
   async updateLastMessage(conversationId: number, messageId: number): Promise<void> {

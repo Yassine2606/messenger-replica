@@ -12,12 +12,10 @@ export function useGetConversations(
 ): UseQueryResult<PaginatedResponse<Conversation>, Error> {
   return useQuery({
     queryKey: conversationQueryKeys.list(options),
-    queryFn: async () => {
-      return conversationService.getConversations(options);
-    },
+    queryFn: async () => conversationService.getConversations(options),
     enabled,
-    staleTime: 0, // Always consider stale so invalidateQueries triggers refetch
-    gcTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: Infinity, // Socket handles all updates
+    gcTime: 5 * 60 * 1000,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
@@ -37,8 +35,8 @@ export function useGetConversation(
       return conversationService.getConversation(conversationId);
     },
     enabled: enabled && !!conversationId,
-    staleTime: 0, // Always consider stale so invalidateQueries triggers refetch
-    gcTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: Infinity, // Socket handles all updates
+    gcTime: 5 * 60 * 1000,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
@@ -78,6 +76,7 @@ export function useInfiniteConversations(enabled = true) {
 
 /**
  * Hook to create or get existing 1:1 conversation
+ * Optimistic: add to cache immediately, socket confirms with first message
  */
 export function useCreateOrGetConversation() {
   const queryClient = useQueryClient();
@@ -87,18 +86,72 @@ export function useCreateOrGetConversation() {
       return conversationService.createOrGetConversation(otherUserId);
     },
     onSuccess: (conversation) => {
-      // Add to conversations list cache
-      queryClient.setQueryData(conversationQueryKeys.list(), (old: Conversation[] | undefined) => {
-        if (!old) return [conversation];
-        // Replace if exists, otherwise add
-        const exists = old.find((c) => c.id === conversation.id);
-        return exists
-          ? old.map((c) => (c.id === conversation.id ? conversation : c))
-          : [conversation, ...old];
+      // Optimistic: add to infinite conversations cache immediately
+      queryClient.setQueryData(conversationQueryKeys.infinite(), (old: any) => {
+        if (!old?.pages) return old;
+        const exists = old.pages[0]?.data?.some((c: any) => c.id === conversation.id);
+        if (exists) return old; // Already exists
+        
+        return {
+          ...old,
+          pages: [
+            {
+              ...old.pages[0],
+              data: [conversation, ...(old.pages[0]?.data || [])],
+            },
+            ...old.pages.slice(1),
+          ],
+        };
       });
 
-      // Set detail cache
+      // Also set detail cache
       queryClient.setQueryData(conversationQueryKeys.detail(conversation.id), conversation);
+    },
+  });
+}
+
+/**
+ * Hook to leave a conversation (remove current user from it)
+ * Optimistic: remove from cache immediately, socket confirms deletion
+ */
+export function useLeaveConversation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (conversationId: number) => {
+      return conversationService.leaveConversation(conversationId);
+    },
+    onMutate: async (conversationId: number) => {
+      // Cancel any in-flight requests
+      await queryClient.cancelQueries({ queryKey: conversationQueryKeys.all });
+
+      // Optimistically remove from infinite conversations cache
+      const previousData = queryClient.getQueryData(conversationQueryKeys.infinite());
+      queryClient.setQueryData(conversationQueryKeys.infinite(), (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            data: page.data.filter((c: any) => c.id !== conversationId),
+          })),
+        };
+      });
+
+      // Remove detail cache
+      queryClient.removeQueries({ queryKey: conversationQueryKeys.detail(conversationId) });
+
+      return { previousData };
+    },
+    onError: (error, conversationId, context) => {
+      // Rollback on error
+      if (context?.previousData) {
+        queryClient.setQueryData(conversationQueryKeys.infinite(), context.previousData);
+      }
+    },
+    onSuccess: () => {
+      // Re-sync conversations list from server
+      queryClient.invalidateQueries({ queryKey: conversationQueryKeys.list() });
     },
   });
 }

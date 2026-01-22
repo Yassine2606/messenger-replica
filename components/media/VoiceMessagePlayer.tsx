@@ -6,6 +6,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { useTheme } from '@/contexts';
 import { useAudioStore } from '@/stores';
+import { shallow } from 'zustand/shallow';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -44,7 +45,6 @@ export const VoiceMessagePlayer = React.memo(function VoiceMessagePlayer({
   // Subscribe to audio store to know if THIS message is currently playing
   const currentlyPlayingMessageId = useAudioStore((state) => state.currentlyPlayingMessageId);
   const setCurrentlyPlaying = useAudioStore((state) => state.setCurrentlyPlaying);
-  
   const isCurrentlyPlaying = message?.id ? currentlyPlayingMessageId === message.id : false;
 
   const isSameSender = useMemo(() => {

@@ -57,5 +57,7 @@ export interface Message {
   isDeleted: boolean;
   reads?: MessageRead[];
   createdAt: string;
+  // Derived numeric timestamp (milliseconds) added on the client for fast comparisons
+  createdAtMs?: number;
   updatedAt: string;
 }

@@ -1,6 +1,8 @@
 import '../global.css';
 
 import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { Platform } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -8,7 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PortalProvider } from '@gorhom/portal';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
-import { SocketProvider, ThemeProvider } from '@/contexts';
+import { SocketProvider, ThemeProvider, useTheme } from '@/contexts';
 import { useSocketEventListener } from '@/hooks';
 
 // Configure Reanimated logger - disable strict mode
@@ -40,8 +42,19 @@ function RootNavigator() {
 function AppContent() {
   // Set up socket event listeners at root level
   useSocketEventListener();
+  const { theme } = useTheme();
 
-  return <RootNavigator />;
+  // StatusBar style needs to be inverted on iOS due to platform differences
+  const statusBarStyle = Platform.OS === 'ios'
+    ? (theme === 'dark' ? 'light' : 'dark')
+    : (theme === 'dark' ? 'light' : 'dark');
+
+  return (
+    <>
+      <StatusBar style={statusBarStyle} />
+      <RootNavigator />
+    </>
+  );
 }
 
 export default function Layout() {

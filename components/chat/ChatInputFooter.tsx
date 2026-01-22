@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { TouchableOpacity, Text, View, TextInput, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts';
 import type { Message } from '@/models';
 
@@ -28,7 +27,7 @@ interface ChatInputFooterProps {
  * - Full accessibility support
  * - Chevron icon when composer is expanded
  */
-export function ChatInputFooter({
+function ChatInputFooterComponent({
   onSend,
   placeholder = 'Aa',
   replyTo,
@@ -39,7 +38,6 @@ export function ChatInputFooter({
   onPickAudio,
 }: ChatInputFooterProps) {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<TextInput>(null);
@@ -55,7 +53,7 @@ export function ChatInputFooter({
     }).start();
   }, [isComposerExpanded, composerWidthAnim]);
 
-  const handleSend = () => {
+  const handleSend = React.useCallback(() => {
     const trimmedText = text.trim();
     if (trimmedText) {
       // Send the message
@@ -65,12 +63,12 @@ export function ChatInputFooter({
       // Optionally blur to collapse composer
       setIsFocused(false);
     }
-  };
+  }, [text, onSend]);
 
-  const handleCollapseComposer = () => {
+  const handleCollapseComposer = React.useCallback(() => {
     setText('');
     setIsFocused(false);
-  };
+  }, []);
 
   const composerWidth = composerWidthAnim.interpolate({
     inputRange: [0, 1],
@@ -82,10 +80,8 @@ export function ChatInputFooter({
       style={{
         backgroundColor: colors.bg.primary,
         borderTopColor: colors.border.primary,
-        paddingBottom: insets.bottom,
-        paddingTop: 8,
       }}
-      className="border-t px-4 py-1">
+      className="border-t px-4 py-2">
       {/* Reply context */}
       {replyTo && (
         <View
@@ -207,3 +203,17 @@ export function ChatInputFooter({
     </View>
   );
 }
+
+export const ChatInputFooter = React.memo(ChatInputFooterComponent, (prev, next) => {
+  return (
+    prev.replyTo?.id === next.replyTo?.id &&
+    prev.sendingMessage === next.sendingMessage &&
+    prev.placeholder === next.placeholder &&
+    prev.onPickImage === next.onPickImage &&
+    prev.onTakePhoto === next.onTakePhoto &&
+    prev.onPickAudio === next.onPickAudio &&
+    prev.onSend === next.onSend &&
+    prev.onCancelReply === next.onCancelReply
+  );
+});
+ChatInputFooter.displayName = 'ChatInputFooter';

@@ -31,4 +31,9 @@ router.post(
   (req, res, next) => conversationController.createOrGetConversation(req, res, next)
 );
 
+// Leave conversation
+router.delete('/:conversationId', authenticate, (req, res, next) =>
+  conversationController.leaveConversation(req, res, next)
+);
+
 export default router;

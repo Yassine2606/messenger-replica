@@ -12,21 +12,27 @@ export function useMarkMessagesAsRead(conversationId: number, messages: Message[
   useEffect(() => {
     if (!conversationId || !messages || !userId) return;
 
-    // Find all unread messages from other users
-    const unreadMessageIds = messages
-      .filter((msg) => {
-        // Skip if already marked
-        if (markedRef.current.has(msg.id)) return false;
-        // Skip own messages
-        if (msg.senderId === userId) return false;
-        // Skip if not sent status
-        if (!msg.reads) return true;
-        
-        // Check if unread by current user
-        const currentUserRead = msg.reads.find((r) => r.userId === userId);
-        return !currentUserRead || currentUserRead.status !== 'read';
-      })
-      .map((msg) => msg.id);
+    // Limit scan to recent messages to avoid O(n) scans on very large lists
+    const MAX_SCAN = 200;
+    const unreadMessageIds: number[] = [];
+
+    // Messages are returned newest-first (DESC). Scan the most recent messages and stop early
+    // if we encounter a message that the user has already read to minimize work.
+    for (let i = 0, scanned = 0; i < messages.length && scanned < MAX_SCAN; i++, scanned++) {
+      const msg = messages[i];
+
+      // Skip already-marked or own messages
+      if (markedRef.current.has(msg.id)) continue;
+      if (msg.senderId === userId) continue;
+
+      const currentUserRead = msg.reads?.find((r) => r.userId === userId);
+      if (currentUserRead && currentUserRead.status === 'read') {
+        // Assume older messages are read as well; stop scanning
+        break;
+      }
+
+      unreadMessageIds.push(msg.id);
+    }
 
     if (unreadMessageIds.length === 0) return;
 
@@ -35,5 +41,6 @@ export function useMarkMessagesAsRead(conversationId: number, messages: Message[
 
     // Send to backend
     socketClient.markMessagesAsRead(conversationId, unreadMessageIds);
-  }, [conversationId, messages, userId]);
+  // Depend on cheap signals rather than the full array to avoid unnecessary triggers
+  }, [conversationId, messages?.length, messages?.[0]?.id, userId]);
 }

@@ -1,15 +1,14 @@
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetAllUsers, useCreateOrGetConversation } from '@/hooks';
 import { useTheme } from '@/contexts';
+import { ScreenLayout } from '@/components/layouts';
 import { Header, SocketConnectionStatus } from '@/components/common';
 import { UserItem } from '@/components/user';
 import type { User } from '@/models';
 
 export default function SelectUserScreen() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const { data: usersResponse, isLoading } = useGetAllUsers();
   const users = usersResponse?.data || [];
   const createOrGetConversation = useCreateOrGetConversation();
@@ -42,12 +41,7 @@ export default function SelectUserScreen() {
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.bg.primary,
-        paddingBottom: insets.bottom,
-      }}>
+    <ScreenLayout>
       <Header title="New Conversation" showBackButton={true} />
       <SocketConnectionStatus />
 
@@ -68,6 +62,6 @@ export default function SelectUserScreen() {
           </View>
         }
       />
-    </View>
+    </ScreenLayout>
   );
 }

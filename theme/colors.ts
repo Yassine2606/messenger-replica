@@ -28,8 +28,9 @@ export const lightColors: ThemeColors = {
       text: '#FFFFFF',
     },
     other: {
-      bg: '#DBEAFE',
-      text: '#1E40AF',
+      // Use a neutral light grey for other users' bubbles in light mode for better contrast
+      bg: '#F3F4F6',
+      text: '#1F2937',
     },
   },
   status: {
@@ -55,10 +56,11 @@ export const lightColors: ThemeColors = {
       text: '#FFFFFF',
     },
     other: {
-      bg: '#DBEAFE',
-      waveColor: '#3B82F6',
-      playButtonColor: '#3B82F6',
-      text: '#1E40AF',
+      // Match bubble.other: neutral light grey background with darker controls for light mode
+      bg: '#F3F4F6',
+      waveColor: '#9CA3AF',
+      playButtonColor: '#1F2937',
+      text: '#1F2937',
     },
   },
   avatarBg: '#3B82F6',
@@ -66,9 +68,9 @@ export const lightColors: ThemeColors = {
 
 export const darkColors: ThemeColors = {
   bg: {
-    primary: '#111827',
-    secondary: '#1F2937',
-    tertiary: '#374151',
+    primary: '#000000',
+    secondary: '#0F0F0F',
+    tertiary: '#1A1A1A',
     inverted: '#F9FAFB',
   },
   text: {
@@ -78,8 +80,8 @@ export const darkColors: ThemeColors = {
     inverted: '#111827',
   },
   border: {
-    primary: '#374151',
-    light: '#1F2937',
+    primary: '#262626',
+    light: '#1A1A1A',
   },
   primary: '#60A5FA',
   success: '#34D399',
@@ -92,7 +94,7 @@ export const darkColors: ThemeColors = {
       text: '#FFFFFF',
     },
     other: {
-      bg: '#374151',
+      bg: '#1A1A1A',
       text: '#D1D5DB',
     },
   },
@@ -104,10 +106,10 @@ export const darkColors: ThemeColors = {
     offline: '#9CA3AF',
   },
   input: {
-    bg: '#1F2937',
+    bg: '#0F0F0F',
     text: '#F9FAFB',
     placeholder: '#9CA3AF',
-    border: '#374151',
+    border: '#262626',
     focusBorder: '#60A5FA',
   },
   overlay: 'rgba(0, 0, 0, 0.8)',
@@ -119,7 +121,7 @@ export const darkColors: ThemeColors = {
       text: '#FFFFFF',
     },
     other: {
-      bg: '#374151',
+      bg: '#1A1A1A',
       waveColor: '#60A5FA',
       playButtonColor: '#60A5FA',
       text: '#D1D5DB',

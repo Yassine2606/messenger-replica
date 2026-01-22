@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useMemo } from 'react';
-import { Text, View, Pressable } from 'react-native';
+import { Text, View, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@/models';
 import { GESTURE, ANIMATION, MESSAGE } from '@/lib/chat-constants';
+import { formatTimeShort } from '@/lib/time-utils';
 import { ReplyIndicator } from './ReplyIndicator';
 import { UserAvatar } from '../user';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -46,23 +47,26 @@ interface BubbleCoordinates {
   height: number;
 }
 
-function formatTime(date: Date | string | undefined): string {
-  if (!date) return '';
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-}
+
 
 function isSameSender(msg1?: Message, msg2?: Message): boolean {
   return msg1?.senderId === msg2?.senderId;
 }
 
 function isWithinMinute(
-  date1: Date | string | undefined,
-  date2: Date | string | undefined
+  date1: number | Date | string | undefined,
+  date2: number | Date | string | undefined
 ): boolean {
-  if (!date1 || !date2) return false;
-  const d1 = typeof date1 === 'string' ? new Date(date1).getTime() : new Date(date1).getTime();
-  const d2 = typeof date2 === 'string' ? new Date(date2).getTime() : new Date(date2).getTime();
+  if (date1 == null || date2 == null) return false;
+
+  const toMs = (d: number | Date | string) => {
+    if (typeof d === 'number') return d;
+    if (typeof d === 'string') return Date.parse(d);
+    return d instanceof Date ? d.getTime() : Date.parse(String(d));
+  };
+
+  const d1 = toMs(date1);
+  const d2 = toMs(date2);
   return Math.abs(d1 - d2) < MESSAGE.GROUPING_TIME_THRESHOLD;
 }
 
@@ -165,11 +169,11 @@ function MessageBubbleComponent({
   const { isGroupedWithPrevious, isGroupedWithNext, borderRadiusStyle } = useMemo(() => {
     const prev =
       isSameSender(previousMessage, message) &&
-      isWithinMinute(previousMessage?.createdAt, message.createdAt);
+      isWithinMinute(previousMessage?.createdAtMs ?? previousMessage?.createdAt, message.createdAtMs ?? message.createdAt);
 
     const next =
       isSameSender(message, nextMessage) &&
-      isWithinMinute(message.createdAt, nextMessage?.createdAt);
+      isWithinMinute(message.createdAtMs ?? message.createdAt, nextMessage?.createdAtMs ?? nextMessage?.createdAt);
 
     return {
       isGroupedWithPrevious: prev,
@@ -178,57 +182,69 @@ function MessageBubbleComponent({
     };
   }, [message.id, isOwn, previousMessage?.id, nextMessage?.id, showTimeSeparator]);
 
+  // Memoized styles to reduce allocations on each render
+  const bubbleBaseStyle = useMemo(
+    () => ({ backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg }),
+    [isOwn, colors.bubble?.own?.bg, colors.bubble?.other?.bg]
+  );
+  const bubbleTextColor = useMemo(
+    () => (isOwn ? colors.bubble.own.text : colors.bubble.other.text),
+    [isOwn, colors.bubble?.own?.text, colors.bubble?.other?.text]
+  );
+
   const handleReply = useCallback(() => {
     if (onReply) {
       onReply(message);
     }
   }, [message, onReply]);
 
-  // GESTURE 1: Row-level gesture for timestamp reveal (shared across all messages on one side)
-  const rowGesture = Gesture.Pan()
-    .enabled(!message.isDeleted)
-    .activeOffsetX([-GESTURE.ACTIVE_OFFSET_X, GESTURE.ACTIVE_OFFSET_X])
-    .onUpdate((event) => {
-      // Both sides: drag LEFT (negative) to reveal timestamp
-      if (event.translationX < 0) {
-        const maxDrag = GESTURE.MAX_TIMESTAMP_DRAG;
-        sharedRowTranslateX.value = Math.max(event.translationX, -maxDrag);
-        sharedTimestampOpacity.value = Math.min(Math.abs(event.translationX) / maxDrag, 1);
-      }
-    })
-    .onEnd(() => {
-      // Snap back on release
-      sharedRowTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_BACK });
-      sharedTimestampOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
-    });
+  // GESTURE 1: Row-level gesture for timestamp reveal (memoized)
+  const rowGesture = useMemo(() => {
+    return Gesture.Pan()
+      .enabled(!message.isDeleted)
+      .activeOffsetX([-GESTURE.ACTIVE_OFFSET_X, GESTURE.ACTIVE_OFFSET_X])
+      .onUpdate((event) => {
+        // Both sides: drag LEFT (negative) to reveal timestamp
+        if (event.translationX < 0) {
+          const maxDrag = GESTURE.MAX_TIMESTAMP_DRAG;
+          sharedRowTranslateX.value = Math.max(event.translationX, -maxDrag);
+          sharedTimestampOpacity.value = Math.min(Math.abs(event.translationX) / maxDrag, 1);
+        }
+      })
+      .onEnd(() => {
+        // Snap back on release
+        sharedRowTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_BACK });
+        sharedTimestampOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
+      });
+  }, [message.isDeleted, sharedRowTranslateX, sharedTimestampOpacity, isOwn]);
 
-  // GESTURE 2: Bubble-level gesture for reply (higher priority)
-  // Own messages: swipe LEFT only
-  // Opposite messages: swipe RIGHT only
-  const bubbleGesture = Gesture.Pan()
-    .enabled(!message.isDeleted)
-    .activeOffsetX([-GESTURE.ACTIVE_OFFSET_X, GESTURE.ACTIVE_OFFSET_X])
-    .activeOffsetY([-GESTURE.ACTIVE_OFFSET_Y, GESTURE.ACTIVE_OFFSET_Y])
-    .onUpdate((event) => {
-      const direction = isOwn ? -1 : 1;
-      if ((isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0)) {
-        bubbleTranslateX.value =
-          direction * Math.min(Math.abs(event.translationX), GESTURE.MAX_REPLY_SWIPE);
-        replyIconOpacity.value = Math.min(
-          Math.abs(event.translationX) / GESTURE.MAX_REPLY_SWIPE,
-          1
-        );
-      }
-    })
-    .onEnd((event) => {
-      const isValidSwipeDirection =
-        (isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0);
-      if (isValidSwipeDirection && Math.abs(event.translationX) > GESTURE.REPLY_SWIPE_THRESHOLD) {
-        scheduleOnRN(handleReply);
-      }
-      bubbleTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
-      replyIconOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
-    });
+  // GESTURE 2: Bubble-level gesture for reply (memoized)
+  const bubbleGesture = useMemo(() => {
+    return Gesture.Pan()
+      .enabled(!message.isDeleted)
+      .activeOffsetX([-GESTURE.ACTIVE_OFFSET_X, GESTURE.ACTIVE_OFFSET_X])
+      .activeOffsetY([-GESTURE.ACTIVE_OFFSET_Y, GESTURE.ACTIVE_OFFSET_Y])
+      .onUpdate((event) => {
+        const direction = isOwn ? -1 : 1;
+        if ((isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0)) {
+          bubbleTranslateX.value =
+            direction * Math.min(Math.abs(event.translationX), GESTURE.MAX_REPLY_SWIPE);
+          replyIconOpacity.value = Math.min(
+            Math.abs(event.translationX) / GESTURE.MAX_REPLY_SWIPE,
+            1
+          );
+        }
+      })
+      .onEnd((event) => {
+        const isValidSwipeDirection =
+          (isOwn && event.translationX < 0) || (!isOwn && event.translationX > 0);
+        if (isValidSwipeDirection && Math.abs(event.translationX) > GESTURE.REPLY_SWIPE_THRESHOLD) {
+          scheduleOnRN(handleReply);
+        }
+        bubbleTranslateX.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
+        replyIconOpacity.value = withTiming(0, { duration: ANIMATION.GESTURE_SNAP_TIMING });
+      });
+  }, [message.isDeleted, isOwn, handleReply]);
 
   // Handler for long press callback
   const triggerLongPress = useCallback(() => {
@@ -249,20 +265,22 @@ function MessageBubbleComponent({
     }
   }, [message, onContextMenu]);
 
-  // GESTURE 3: Long press gesture for context menu (simultaneous with swipe)
-  const longPressGesture = Gesture.LongPress()
-    .enabled(!message.isDeleted)
-    .minDuration(300)
-    .onStart(() => {
-      runOnJS(triggerLongPress)();
-    });
+  // GESTURE 3: Long press gesture for context menu (simultaneous with swipe) (memoized)
+  const longPressGesture = useMemo(() => {
+    return Gesture.LongPress()
+      .enabled(!message.isDeleted)
+      .minDuration(300)
+      .onStart(() => {
+        runOnJS(triggerLongPress)();
+      });
+  }, [message.isDeleted, triggerLongPress]);
 
   // Combine gestures: long press and swipe should work together
-  const combinedBubbleGesture = Gesture.Simultaneous(longPressGesture, bubbleGesture);
+  const combinedBubbleGesture = useMemo(() => Gesture.Simultaneous(longPressGesture, bubbleGesture), [longPressGesture, bubbleGesture]);
 
-  // Row-level animated style (for timestamp reveal)
+  // Row-level animated style (for timestamp reveal - only for own messages)
   const rowAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: sharedRowTranslateX.value }],
+    transform: [{ translateX: isOwn ? sharedRowTranslateX.value : 0 }],
   }));
 
   // Bubble-level animated style (for reply swipe)
@@ -282,11 +300,17 @@ function MessageBubbleComponent({
     return (
       <View className={`mb-1 flex-row ${isOwn ? 'justify-end' : 'justify-start'}`}>
         <View
-          style={{ backgroundColor: colors.bg.tertiary }}
-          className="max-w-[75%] rounded-2xl px-3 py-2">
-          <Text style={{ color: colors.text.tertiary }} className="text-sm italic">
-            Message deleted
-          </Text>
+          style={{ backgroundColor: colors.bg.tertiary, ...borderRadiusStyle, minWidth: 64 }}
+          className="max-w-[280px] px-3 py-2"
+        >
+          <View style={{ flexShrink: 1 }}>
+            <Text
+              style={{ color: colors.text.tertiary, flexWrap: 'wrap' }}
+              className="text-base italic leading-6"
+            >
+              Message deleted
+            </Text>
+          </View>
         </View>
       </View>
     );
@@ -386,38 +410,33 @@ function MessageBubbleComponent({
                         style={{ flex: 1, width: '100%', height: '100%' }}
                         contentFit="cover"
                         cachePolicy="memory-disk"
-                        transition={200}
+                        transition={Platform.OS === 'android' ? 0 : 200}
                       />
                     </Pressable>
                   </Animated.View>
                   {message.content && (
                     <View
-                      style={{
-                        backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg,
-                      }}
+                      style={[bubbleBaseStyle, { marginTop: 4, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }]}
                       className="mt-1 rounded-2xl px-3 py-2">
                       <Text
-                        style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
+                        style={{ color: bubbleTextColor }}
                         className="text-base leading-5">
                         {message.content}
                       </Text>
                     </View>
-                  )}
+                  )} 
                 </>
               ) : message.type === 'text' ? (
                 <View
-                  style={{
-                    backgroundColor: isOwn ? colors.bubble.own.bg : colors.bubble.other.bg,
-                    ...borderRadiusStyle,
-                  }}
+                  style={[bubbleBaseStyle, borderRadiusStyle]}
                   className="max-w-[280px] px-3 py-2">
                   <Text
-                    style={{ color: isOwn ? colors.bubble.own.text : colors.bubble.other.text }}
+                    style={{ color: bubbleTextColor }}
                     className="text-base leading-6">
                     {message.content}
                   </Text>
                 </View>
-              ) : null}
+              ) : null} 
             </Animated.View>
           </GestureDetector>
 
@@ -433,7 +452,7 @@ function MessageBubbleComponent({
             ]}
             pointerEvents="none">
             <Text style={{ color: colors.text.tertiary }} className="text-xs">
-              {formatTime(message.createdAt)}
+              {formatTimeShort(message.createdAt)}
             </Text>
           </Animated.View>
         </Animated.View>
@@ -455,7 +474,9 @@ const MessageBubble = React.memo(MessageBubbleComponent, (prevProps, nextProps) 
     prevProps.message.isDeleted === nextProps.message.isDeleted &&
     prevProps.message.reads?.length === nextProps.message.reads?.length &&
     prevProps.isOwn === nextProps.isOwn &&
-    prevProps.showTimeSeparator === nextProps.showTimeSeparator
+    prevProps.showTimeSeparator === nextProps.showTimeSeparator &&
+    prevProps.previousMessage?.id === nextProps.previousMessage?.id &&
+    prevProps.nextMessage?.id === nextProps.nextMessage?.id
   );
 });
 

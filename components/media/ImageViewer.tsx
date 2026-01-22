@@ -56,7 +56,7 @@ type ImageDimensions = { width: number; height: number };
  * - Loading and error states
  * - Accessibility support
  */
-export function ImageViewer({
+function ImageViewerComponent({
   visible,
   imageUri,
   onClose,
@@ -437,3 +437,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+export const ImageViewer = React.memo(ImageViewerComponent, (prev, next) => {
+  return (
+    prev.visible === next.visible &&
+    prev.imageUri === next.imageUri &&
+    prev.imageDimensions?.width === next.imageDimensions?.width &&
+    prev.imageDimensions?.height === next.imageDimensions?.height
+  );
+});
+ImageViewer.displayName = 'ImageViewer';

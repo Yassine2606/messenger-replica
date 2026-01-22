@@ -33,7 +33,7 @@ class SocketConnection {
     this.token = token;
     this.socket = io(SOCKET_URL, {
       auth: { token },
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -130,25 +130,14 @@ class SocketClient {
 
   /**
    * Queue action if socket not ready, otherwise execute immediately
-   * Returns action key for potential cancellation
    */
-  private queueOrExecute(action: () => void, deduplicationKey?: string): string {
+  private queueOrExecute(action: () => void, deduplicationKey?: string): void {
     if (this.isConnected()) {
       action();
-      return '';
     } else {
-      // Use provided key or generate unique key to prevent duplicates
-      const actionKey = deduplicationKey || `action-${this.actionCounter++}`;
-      this.pendingActions.set(actionKey, action);
-      return actionKey;
+      const key = deduplicationKey || `action-${this.actionCounter++}`;
+      this.pendingActions.set(key, action);
     }
-  }
-
-  /**
-   * Cancel a pending action by its key
-   */
-  private cancelPendingAction(key: string): void {
-    this.pendingActions.delete(key);
   }
 
   /**
@@ -167,69 +156,41 @@ class SocketClient {
    * Removes previous listeners to prevent duplication on reconnection
    */
   private setupEventHandlers(socket: Socket): void {
-    // Remove all previous listeners to prevent duplication on reconnect
     socket.removeAllListeners();
 
-    socket.on('connect', () => {
-      this.eventManager.emit('connected');
-    });
-
-    socket.on('disconnect', (reason) => {
-      this.eventManager.emit('disconnected', reason);
-    });
-
+    socket.on('connect', () => this.eventManager.emit('connected'));
+    socket.on('disconnect', (reason) => this.eventManager.emit('disconnected', reason));
     socket.on('connect_error', (error) => {
       console.error('[Socket] Connection error:', error);
       this.eventManager.emit('error', error);
     });
-
     socket.on('error', (payload: SocketErrorPayload) => {
       console.error('[Socket] Server error:', payload);
       this.eventManager.emit('server_error', payload);
     });
 
-    // Heartbeat to keep connection alive
+    // Event forwarding - simple passthrough
+    const events: Array<[string, string]> = [
+      ['message:unified', 'message:unified'],
+      ['status:unified', 'status:unified'],
+      ['message:deleted', 'message:deleted'],
+      ['presence:joined', 'presence:joined'],
+      ['presence:left', 'presence:left'],
+      ['user:status', 'user:status'],
+      ['typing:start', 'typing:start'],
+      ['typing:stop', 'typing:stop'],
+    ];
+
+    events.forEach(([socketEvent, managerEvent]) => {
+      socket.on(socketEvent, (payload) => this.eventManager.emit(managerEvent, payload));
+    });
+
+    // Heartbeat every 30s to keep connection alive
     const heartbeatInterval = setInterval(() => {
-      if (socket.connected) {
-        socket.emit('ping');
-      }
-    }, 20000); // Every 20 seconds - aggressive to maintain connection
+      if (socket.connected) socket.emit('presence:ping');
+    }, 30000);
 
-    socket.once('disconnect', () => {
-      clearInterval(heartbeatInterval);
-    });
-
-    socket.on('message:unified', (payload: UnifiedMessageEvent) => {
-      this.eventManager.emit('message:unified', payload);
-    });
-
-    socket.on('status:unified', (payload: UnifiedStatusUpdateEvent) => {
-      this.eventManager.emit('status:unified', payload);
-    });
-
-    socket.on('message:deleted', (payload: UnifiedMessageDeletionEvent) => {
-      this.eventManager.emit('message:deleted', payload);
-    });
-
-    socket.on('presence:joined', (payload: SocketPresencePayload) => {
-      this.eventManager.emit('presence:joined', payload);
-    });
-
-    socket.on('presence:left', (payload: SocketPresencePayload) => {
-      this.eventManager.emit('presence:left', payload);
-    });
-
-    socket.on('user:status', (payload: SocketUserStatusPayload) => {
-      this.eventManager.emit('user:status', payload);
-    });
-
-    socket.on('typing:start', (payload: SocketTypingPayload) => {
-      this.eventManager.emit('typing:start', payload);
-    });
-
-    socket.on('typing:stop', (payload: SocketTypingPayload) => {
-      this.eventManager.emit('typing:stop', payload);
-    });
+    socket.once('disconnect', () => clearInterval(heartbeatInterval));
   }
 
   // Socket action methods
